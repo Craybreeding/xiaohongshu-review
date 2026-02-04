@@ -395,10 +395,24 @@ if st.session_state.kol_issues and st.session_state.kol_content:
                     # 卖点类：提供在线输入 + AI建议
                     if is_selling:
                         sp_key = f"sp_{i}"
-                        ai_key = f"ai_{i}"
 
-                        # AI生成建议按钮
-                        if st.button("AI帮我写", key=f"btn_ai_{i}"):
+                        btn_col, input_col = st.columns([1, 2])
+                        with btn_col:
+                            ai_clicked = st.button("🤖 AI帮我写", key=f"btn_ai_{i}")
+                        with input_col:
+                            current_val = st.session_state.selling_inputs.get(sp_key, "")
+                            user_input = st.text_input(
+                                "自定义写法",
+                                value=current_val,
+                                placeholder="在此输入你的表达方式...",
+                                key=f"input_{i}",
+                                label_visibility="collapsed",
+                            )
+                            if user_input:
+                                st.session_state.selling_inputs[sp_key] = user_input
+
+                        # AI生成建议
+                        if ai_clicked:
                             selling_point = issue["suggestion"].replace("请加入: ", "")
                             prompt = f"""你是小红书母婴KOL文案专家。KOL需要在稿件中加入以下产品卖点：
 「{selling_point}」
@@ -408,37 +422,29 @@ if st.session_state.kol_issues and st.session_state.kol_content:
 2. 不能用禁词（敏宝、过敏、预防、新生儿、免疫、生长、发育）
 3. 每个控制在30字以内
 
-格式：
-1. [表达1]
-2. [表达2]
-3. [表达3]"""
-                            with st.spinner("AI思考中..."):
-                                result = call_claude_api(prompt)
-                                if result:
-                                    st.session_state.selling_suggestions[sp_key] = result
+只输出3个表达，每行一个，用序号开头：
+1. xxx
+2. xxx
+3. xxx"""
+                            result = call_claude_api(prompt)
+                            if result and not result.startswith("Error"):
+                                st.session_state.selling_suggestions[sp_key] = result
+                                st.rerun()
+                            elif result and result.startswith("Error"):
+                                st.error(f"AI调用失败: {result}")
+                            else:
+                                st.error("API Key未设置，请在Render环境变量中配置ANTHROPIC_API_KEY")
 
                         # 显示AI建议（如果有）
                         if sp_key in st.session_state.selling_suggestions:
-                            st.markdown("**AI建议的表达方式：**")
                             suggestions_text = st.session_state.selling_suggestions[sp_key]
-                            # 解析建议选项
                             suggestion_lines = [l.strip() for l in suggestions_text.split('\n') if l.strip() and l.strip()[0].isdigit()]
                             for si, sline in enumerate(suggestion_lines):
-                                # 去掉序号
                                 clean = re.sub(r'^\d+[\.\、\)]\s*', '', sline)
-                                if st.button(f"选用: {clean}", key=f"pick_{i}_{si}"):
+                                if st.button(f"👆 选用: {clean}", key=f"pick_{i}_{si}"):
                                     st.session_state.selling_inputs[sp_key] = clean
+                                    st.rerun()
 
-                        # 手动输入框
-                        current_val = st.session_state.selling_inputs.get(sp_key, "")
-                        user_input = st.text_input(
-                            "自定义写法",
-                            value=current_val,
-                            placeholder="在此输入你的表达方式...",
-                            key=f"input_{i}",
-                        )
-                        if user_input:
-                            st.session_state.selling_inputs[sp_key] = user_input
                         st.markdown("---")
 
     # 补充意见 + 生成文档（全宽）
