@@ -387,17 +387,13 @@ with col_left:
     elif kol_text:
         kol_content = kol_text
 
-    if st.button("开始审稿", type="primary", key="btn_review", use_container_width=True):
-        if not kol_name:
-            st.error("请填写KOL名称")
-        elif not kol_content:
-            st.error("请上传或粘贴稿件")
-        else:
-            issues, data = run_review(kol_content)
-            st.session_state.kol_issues = issues
-            st.session_state.kol_content = kol_content
-            st.session_state.kol_data = data
-            st.success(f"审核完成! 发现 {len(issues)} 个问题")
+    # 有内容就自动审稿
+    if kol_content:
+        issues, data = run_review(kol_content)
+        st.session_state.kol_issues = issues
+        st.session_state.kol_content = kol_content
+        st.session_state.kol_data = data
+        st.success(f"审核完成! 发现 {len(issues)} 个问题")
 
 with col_right:
     st.markdown("#### 💬 上传客户反馈")
