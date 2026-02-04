@@ -1,30 +1,18 @@
 import streamlit as st
 import re
 import os
+import json
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Dict
 from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_COLOR_INDEX
 import io
-import anthropic
+import urllib.request
 
 RULE_VERSION = "2026-02-04"
-BRIEF_VERSION = "2026-02"
-
-BRIEF_CONTENT = """
-**核心卖点 (不可改动):**
-- 多项科学实证的雀巢尖峰水解技术
-- 防敏领域权威德国GINI研究认证
-- 能长效防敏20年
-- 相比于牛奶蛋白致敏性降低1000倍
-- 全球创新的超倍自护科技
-- 6种HMO加上明星双菌B.Infantis和Bb-12
-- 协同作用释放高倍的原生保护力
-- 短短28天就能调理好娃的肚肚菌菌环境
-- 保护力能持续15个月
-- 25种维生素和矿物质
-- 全乳糖的配方口味清淡
-"""
+TODAY = datetime.now().strftime("%Y%m%d")
 
 REVIEW_RULES = {
     "required_keywords": ["适度水解", "防敏", "能恩全护"],
@@ -54,14 +42,6 @@ REVIEW_RULES = {
 
 SUGGESTIONS = {"敏宝": "敏感体质宝宝", "新生儿": "初生宝宝", "过敏": "敏敏", "预防": "远离", "生长": "成长", "发育": "成长", "免疫": "保护力"}
 
-@dataclass
-class CheckResult:
-    name: str
-    passed: bool
-    found: int = 0
-    total: int = 0
-    issues: List[str] = field(default_factory=list)
-
 def read_docx(file):
     doc = Document(io.BytesIO(file.read()))
     text = []
@@ -76,251 +56,400 @@ def parse_content(content):
     word_count = len(re.findall(r'[\u4e00-\u9fff]', text))
     return {"text": content, "tags": tags, "word_count": word_count}
 
-def run_review(content, kol, ver, reviewer):
+def run_review(content):
     data = parse_content(content)
-    results = {}
+    issues = []
     
-    kw_issues = []
-    kw_found = 0
     for kw in REVIEW_RULES["required_keywords"]:
-        if kw in data["text"]:
-            kw_found += 1
-        else:
-            kw_issues.append(f"缺少: {kw}")
-    results["keywords"] = CheckResult("必须关键词", len(kw_issues)==0, kw_found, len(REVIEW_RULES["required_keywords"]), kw_issues)
+        if kw not in data["text"]:
+            issues.append({"type": "keyword", "desc": f"缺少必须关键词: {kw}", "suggestion": f"请在稿件中加入「{kw}」"})
     
-    fb_issues = []
     exceptions = REVIEW_RULES["allowed_exceptions"]
     for cat, words in REVIEW_RULES["forbidden_words"].items():
         for w in words:
             if w in data["text"]:
-                ctx = data["text"][max(0,data["text"].find(w)-10):data["text"].find(w)+len(w)+10]
+                idx = data["text"].find(w)
+                ctx = data["text"][max(0,idx-10):idx+len(w)+10]
                 if not any(e in ctx for e in exceptions):
-                    sug = SUGGESTIONS.get(w, "删除")
-                    fb_issues.append(f"{cat} [{w}] - {sug}")
-    results["forbidden"] = CheckResult("禁词检查", len(fb_issues)==0, 0, 0, fb_issues)
+                    sug = SUGGESTIONS.get(w, "删除此词")
+                    issues.append({"type": "forbidden", "desc": f"出现禁词「{w}」", "context": ctx, "suggestion": f"建议改为「{sug}」"})
     
-    sp_issues = []
-    sp_found = 0
     for sp in REVIEW_RULES["selling_points"]:
-        if sp in data["text"]:
-            sp_found += 1
-        else:
-            sp_issues.append(f"缺少: {sp[:20]}...")
-    results["selling"] = CheckResult("不可改动卖点", sp_found==len(REVIEW_RULES["selling_points"]), sp_found, len(REVIEW_RULES["selling_points"]), sp_issues)
+        if sp not in data["text"]:
+            issues.append({"type": "selling", "desc": f"缺少卖点", "suggestion": f"请加入: {sp}"})
     
-    st_issues = []
     if data["word_count"] > REVIEW_RULES["max_words"]:
-        st_issues.append(f"字数超限: {data['word_count']}/{REVIEW_RULES['max_words']}")
+        issues.append({"type": "structure", "desc": f"字数超限: {data['word_count']}/{REVIEW_RULES['max_words']}", "suggestion": "请精简内容"})
+    
     if len(data["tags"]) < REVIEW_RULES["min_tags"]:
-        st_issues.append(f"标签不足: {len(data['tags'])}/{REVIEW_RULES['min_tags']}")
-    results["structure"] = CheckResult("结构完整性", len(st_issues)==0, 0, 0, st_issues)
+        issues.append({"type": "structure", "desc": f"标签不足: {len(data['tags'])}/{REVIEW_RULES['min_tags']}", "suggestion": "请补充标签"})
     
-    tg_issues = []
-    tg_found = 0
     for t in REVIEW_RULES["required_tags"]:
-        if t in data["tags"]:
-            tg_found += 1
-        else:
-            tg_issues.append(f"缺少: {t}")
-    results["tags"] = CheckResult("必提Tag", len(tg_issues)==0, tg_found, len(REVIEW_RULES["required_tags"]), tg_issues)
+        if t not in data["tags"]:
+            issues.append({"type": "tag", "desc": f"缺少必提标签: {t}", "suggestion": f"请加入 {t}"})
     
-    score = 0
-    weights = [("keywords", 0.15), ("forbidden", 0.20), ("selling", 0.30), ("structure", 0.15), ("tags", 0.20)]
-    for key, w in weights:
-        r = results[key]
-        if r.total > 0:
-            score += (r.found / r.total) * w * 100
-        else:
-            score += (100 if r.passed else 0) * w
-    
-    return {"kol": kol, "ver": ver, "reviewer": reviewer, "results": results, "score": round(score, 1), "word_count": data["word_count"], "tag_count": len(data["tags"])}
+    return issues, data
 
-def get_ai_suggestions(content, issues):
+def call_claude_api(prompt):
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        return None, None
+        return None
     
-    issues_text = "\n".join([f"- {issue}" for issue in issues])
-    selling_points_text = "\n".join([f"- {sp}" for sp in REVIEW_RULES["selling_points"]])
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01"
+    }
+    data = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 4000,
+        "messages": [{"role": "user", "content": prompt}]
+    }
     
-    prompt = f"""你是小红书KOL稿件审核专家。请修改以下稿件。
-
-原稿件:
-{content}
-
-发现的问题:
-{issues_text}
-
-必须包含的卖点(不可改动原文):
-{selling_points_text}
-
-禁词替换: 敏宝改为敏感体质宝宝, 新生儿改为初生宝宝, 过敏改为敏敏, 预防改为远离, 生长发育改为成长, 免疫改为保护力
-
-任务1: 列出修改建议,格式为:
-问题: xxx
-原文: xxx  
-改为: xxx
-
-任务2: 输出修改后的完整稿件
-
-请用以下格式回复:
-
-SUGGESTIONS_START
-(修改建议)
-SUGGESTIONS_END
-
-REVISED_START
-(完整稿件)
-REVISED_END
-"""
+    req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers)
     
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        response = message.content[0].text
-        
-        suggestions = ""
-        revised = ""
-        
-        if "SUGGESTIONS_START" in response and "SUGGESTIONS_END" in response:
-            start = response.find("SUGGESTIONS_START") + len("SUGGESTIONS_START")
-            end = response.find("SUGGESTIONS_END")
-            suggestions = response[start:end].strip()
-        
-        if "REVISED_START" in response and "REVISED_END" in response:
-            start = response.find("REVISED_START") + len("REVISED_START")
-            end = response.find("REVISED_END")
-            revised = response[start:end].strip()
-        
-        return suggestions, revised
+        with urllib.request.urlopen(req, timeout=60) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            return result["content"][0]["text"]
     except Exception as e:
-        return f"AI error: {str(e)}", None
+        return f"Error: {str(e)}"
+
+def analyze_client_feedback(original, client_modified):
+    prompt = f"""你是小红书KOL稿件审核专家。请对比分析客户修改的内容。
+
+原稿件(赞意审核后):
+{original}
+
+客户修改后:
+{client_modified}
+
+审核规则:
+- 禁词: 敏宝、奶瓶、奶嘴、新生儿、过敏、疾病、预防、生长、发育、免疫、最好、最佳
+- 例外: "第一口奶粉"中的"第一"不算禁词
+
+请分析:
+1. 客户修改了哪些内容(逐条列出)
+2. 每条修改是否符合审核规则
+3. 不符合的给出修改建议
+
+用以下格式回复:
+
+===修改分析===
+修改1: [修改内容描述]
+状态: 符合/不符合
+建议: [如不符合,给出建议]
+
+修改2: ...
+
+===总结===
+符合规则的修改: X条
+需要调整的修改: X条
+"""
+    return call_claude_api(prompt)
+
+def create_annotated_docx(content, issues, selected_issues, kol_name, version, step):
+    doc = Document()
+    
+    if step == 1:
+        title = f"{kol_name}_{TODAY}_KOL_第{version}版"
+        subtitle = "KOL原稿"
+    elif step == 2:
+        title = f"{kol_name}_{TODAY}_KOL-赞意_第{version}版"
+        subtitle = "赞意审核批注版"
+    else:
+        title = f"{kol_name}_{TODAY}_KOL-赞意-客户_第{version}版"
+        subtitle = "客户反馈处理版"
+    
+    doc.add_heading(title, 0)
+    doc.add_paragraph(f"审核时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    doc.add_paragraph(f"文档类型: {subtitle}")
+    doc.add_paragraph("---")
+    
+    if selected_issues:
+        doc.add_heading("审核意见", level=1)
+        for i, idx in enumerate(selected_issues):
+            if idx < len(issues):
+                issue = issues[idx]
+                p = doc.add_paragraph()
+                p.add_run(f"{i+1}. {issue['desc']}").bold = True
+                p.add_run(f"\n   建议: {issue['suggestion']}")
+        doc.add_paragraph("---")
+    
+    doc.add_heading("稿件内容", level=1)
+    for line in content.split('\n'):
+        if line.strip():
+            p = doc.add_paragraph(line)
+    
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer, title
 
 st.set_page_config(page_title="小红书KOL审稿系统", page_icon="🔍", layout="wide")
-st.markdown("<h1 style='text-align:center;color:#ff6b6b;'>小红书KOL审稿系统 v2.1</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;color:gray;'>能恩全护 - AI智能审核</p>", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+.kol-box {
+    background-color: #fff0f3;
+    border: 2px solid #ff6b6b;
+    border-radius: 15px;
+    padding: 20px;
+    margin: 10px 0;
+}
+.client-box {
+    background-color: #f0fff4;
+    border: 2px solid #38a169;
+    border-radius: 15px;
+    padding: 20px;
+    margin: 10px 0;
+}
+.step-badge {
+    background-color: #667eea;
+    color: white;
+    padding: 8px 20px;
+    border-radius: 20px;
+    font-weight: bold;
+    display: inline-block;
+    margin-bottom: 15px;
+    font-size: 14px;
+}
+.step-badge-pink {
+    background-color: #ff6b6b;
+}
+.step-badge-green {
+    background-color: #38a169;
+}
+.file-name {
+    background-color: #f7fafc;
+    border: 1px solid #e2e8f0;
+    padding: 10px;
+    border-radius: 8px;
+    font-family: monospace;
+    margin: 10px 0;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("<h1 style='text-align:center;color:#ff6b6b;'>小红书KOL审稿系统</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:gray;'>能恩全护 - 完整审核工作流</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-c1, c2 = st.columns(2)
-c1.info(f"审核规则: {RULE_VERSION}")
-c2.info(f"Brief: {BRIEF_VERSION}")
+col1, col2 = st.columns(2)
+with col1:
+    kol_name = st.text_input("KOL名称", placeholder="例如: 团妈爱测评", value="")
+with col2:
+    version_num = st.selectbox("当前版本", [1, 2, 3, 4, 5], index=0)
 
-with st.expander("查看Brief内容"):
-    st.markdown(BRIEF_CONTENT)
-
+st.markdown(f"**当前日期**: {TODAY}")
 st.markdown("---")
 
-c1, c2, c3 = st.columns(3)
-kol = c1.text_input("KOL名称", placeholder="例如: 小红薯妈妈")
-ver = c2.selectbox("版本", ["V1", "V2", "V3", "FINAL"])
-reviewer = c3.selectbox("审核方", ["赞意", "客户"])
+if 'kol_issues' not in st.session_state:
+    st.session_state.kol_issues = []
+if 'kol_content' not in st.session_state:
+    st.session_state.kol_content = ""
+if 'client_analysis' not in st.session_state:
+    st.session_state.client_analysis = ""
 
-st.markdown("### 稿件内容")
+col_left, col_right = st.columns(2)
 
-tab1, tab2 = st.tabs(["上传文档", "粘贴文本"])
-
-content = ""
-
-with tab1:
-    uploaded_file = st.file_uploader("上传Word文档", type=["docx"])
-    if uploaded_file:
-        content = read_docx(uploaded_file)
-        st.success(f"已读取: {uploaded_file.name}")
-        with st.expander("预览内容"):
-            st.text(content[:500] + "..." if len(content) > 500 else content)
-
-with tab2:
-    pasted = st.text_area("粘贴稿件内容", height=250, placeholder="粘贴稿件...")
-    if pasted:
-        content = pasted
-
-if st.button("开始审核", type="primary", use_container_width=True):
-    if not kol:
-        st.error("请填写KOL名称")
-    elif not content.strip():
-        st.error("请上传文档或粘贴内容")
-    else:
-        r = run_review(content, kol, ver, reviewer)
-        
-        st.markdown("---")
-        st.markdown("## 审核报告")
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("KOL", f"@{r['kol']}")
-        c2.metric("版本", r['ver'])
-        c3.metric("审核方", r['reviewer'])
-        c4.metric("综合评分", f"{r['score']}%")
-        
-        st.markdown("---")
-        st.markdown("## 一、客观检查")
-        
-        checks = [
-            ("1.1 必须关键词", "keywords"),
-            ("1.2 禁词检查", "forbidden"),
-            ("1.3 不可改动卖点", "selling"),
-            ("1.4 结构完整性", "structure"),
-            ("1.5 必提Tag", "tags")
-        ]
-        
-        all_issues = []
-        for title, key in checks:
-            res = r["results"][key]
-            if res.total > 0:
-                status = f"{res.found}/{res.total}"
-            else:
-                status = "通过" if res.passed else f"{len(res.issues)}项问题"
-            
-            with st.expander(f"{title} - {status}", expanded=not res.passed):
-                if res.passed:
-                    st.success("通过")
-                else:
-                    for issue in res.issues:
-                        st.warning(issue)
-                        all_issues.append(f"[{title}] {issue}")
-        
-        st.markdown("---")
-        st.markdown("## 二、审核总结")
-        
-        if r["score"] >= 90:
-            st.success("优秀!")
-        elif r["score"] >= 70:
-            st.info("良好")
-        elif r["score"] >= 50:
-            st.warning("需改进")
+with col_left:
+    st.markdown('<span class="step-badge step-badge-pink">Step 1: KOL稿件 - 赞意审核 - 完毕给客户</span>', unsafe_allow_html=True)
+    st.markdown('<div class="kol-box">', unsafe_allow_html=True)
+    
+    st.markdown("### 📄 上传KOL稿件")
+    st.caption("上传KOL提交的大纲或稿件，进行审核")
+    
+    kol_file = st.file_uploader("上传稿件 (.docx)", type=["docx"], key="kol_file")
+    kol_text = st.text_area("或粘贴内容", height=200, placeholder="粘贴KOL稿件内容...", key="kol_text_input")
+    
+    kol_content = ""
+    if kol_file:
+        kol_file.seek(0)
+        kol_content = read_docx(kol_file)
+        st.success(f"已读取: {kol_file.name}")
+    elif kol_text:
+        kol_content = kol_text
+    
+    if st.button("开始审稿", type="primary", key="review_kol", use_container_width=True):
+        if not kol_name:
+            st.error("请先填写KOL名称")
+        elif not kol_content:
+            st.error("请上传或粘贴KOL稿件")
         else:
-            st.error("需大改")
+            issues, data = run_review(kol_content)
+            st.session_state.kol_issues = issues
+            st.session_state.kol_content = kol_content
+            st.success(f"审核完成! 发现 {len(issues)} 个问题")
+    
+    if st.session_state.kol_issues:
+        st.markdown("### 审核意见 (勾选采纳)")
+        selected = []
+        for i, issue in enumerate(st.session_state.kol_issues):
+            checked = st.checkbox(f"{issue['desc']}", key=f"issue_{i}", value=True)
+            if checked:
+                selected.append(i)
+            st.caption(f"  建议: {issue['suggestion']}")
         
-        st.caption(f"字数: {r['word_count']} | 标签: {r['tag_count']}个")
+        st.markdown("---")
         
-        if all_issues and r["score"] < 90:
-            st.markdown("---")
-            st.markdown("## 三、AI修改建议")
+        if kol_name and st.session_state.kol_content:
+            output_name = f"{kol_name}_{TODAY}_KOL-赞意_第{version_num}版"
+            st.markdown(f'<div class="file-name">📁 输出: {output_name}.docx</div>', unsafe_allow_html=True)
             
-            with st.spinner("AI正在生成修改建议..."):
-                suggestions, revised = get_ai_suggestions(content, all_issues)
+            if st.button("生成批注文档", key="gen_kol_doc", use_container_width=True):
+                buffer, title = create_annotated_docx(
+                    st.session_state.kol_content, 
+                    st.session_state.kol_issues, 
+                    selected, 
+                    kol_name, 
+                    version_num, 
+                    2
+                )
+                st.download_button(
+                    label="下载批注文档 - 可发给客户",
+                    data=buffer,
+                    file_name=f"{output_name}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="download_kol"
+                )
+                st.success("文档已生成!")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col_right:
+    st.markdown('<span class="step-badge step-badge-green">Step 2: 客户反馈 - 赞意处理 - 完毕给KOL</span>', unsafe_allow_html=True)
+    st.markdown('<div class="client-box">', unsafe_allow_html=True)
+    
+    st.markdown("### 💬 上传客户反馈")
+    st.caption("上传客户修改后的文档，分析修改内容")
+    
+    client_file = st.file_uploader("上传客户反馈 (.docx)", type=["docx"], key="client_file")
+    client_text = st.text_area("或粘贴内容", height=200, placeholder="粘贴客户修改后的内容...", key="client_text_input")
+    
+    client_content = ""
+    if client_file:
+        client_file.seek(0)
+        client_content = read_docx(client_file)
+        st.success(f"已读取: {client_file.name}")
+    elif client_text:
+        client_content = client_text
+    
+    if st.button("分析客户反馈", type="primary", key="analyze_client", use_container_width=True):
+        if not kol_name:
+            st.error("请先填写KOL名称")
+        elif not client_content:
+            st.error("请上传或粘贴客户反馈")
+        elif not st.session_state.kol_content:
+            st.error("请先在左侧上传KOL原稿")
+        else:
+            with st.spinner("AI正在分析客户修改..."):
+                analysis = analyze_client_feedback(st.session_state.kol_content, client_content)
+                st.session_state.client_analysis = analysis
+    
+    if st.session_state.client_analysis:
+        st.markdown("### 客户修改分析")
+        
+        if "===修改分析===" in st.session_state.client_analysis:
+            parts = st.session_state.client_analysis.split("===总结===")
+            analysis_part = parts[0].replace("===修改分析===", "").strip()
             
-            if suggestions:
-                st.markdown("### 修改建议")
-                st.markdown(suggestions)
+            lines = analysis_part.split("\n")
+            current_change = {}
+            changes = []
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith("修改"):
+                    if current_change:
+                        changes.append(current_change)
+                    current_change = {"desc": line, "status": "", "suggestion": ""}
+                elif line.startswith("状态:"):
+                    current_change["status"] = line.replace("状态:", "").strip()
+                elif line.startswith("建议:"):
+                    current_change["suggestion"] = line.replace("建议:", "").strip()
+            if current_change:
+                changes.append(current_change)
+            
+            for i, change in enumerate(changes):
+                is_ok = "符合" in change.get("status", "")
+                icon = "✅" if is_ok else "⚠️"
                 
-                if revised:
-                    st.markdown("---")
-                    st.markdown("### 修改后的稿件")
-                    st.text_area("可直接复制", revised, height=300)
-                    
-                    st.download_button(
-                        label="下载修改稿件",
-                        data=revised,
-                        file_name=f"{kol}_{ver}_revised.txt",
-                        mime="text/plain"
-                    )
-            else:
-                st.warning("AI服务不可用,请检查API Key")
+                checked = st.checkbox(
+                    f"{icon} {change.get('desc', '')}",
+                    key=f"client_change_{i}",
+                    value=is_ok
+                )
+                if change.get("suggestion"):
+                    st.caption(f"  {change['suggestion']}")
+            
+            if len(parts) > 1:
+                st.markdown("---")
+                st.markdown("### 总结")
+                st.info(parts[1].strip())
+        else:
+            st.markdown(st.session_state.client_analysis)
+        
+        st.markdown("---")
+        
+        if kol_name and client_content:
+            output_name = f"{kol_name}_{TODAY}_KOL-赞意-客户_第{version_num}版"
+            st.markdown(f'<div class="file-name">📁 输出: {output_name}.docx</div>', unsafe_allow_html=True)
+            
+            if st.button("生成给KOL的文档", key="gen_client_doc", use_container_width=True):
+                doc = Document()
+                doc.add_heading(output_name, 0)
+                doc.add_paragraph(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+                doc.add_paragraph("文档类型: 客户反馈处理版 - 可发给KOL")
+                doc.add_paragraph("---")
+                doc.add_heading("客户修改分析", level=1)
+                doc.add_paragraph(st.session_state.client_analysis)
+                doc.add_paragraph("---")
+                doc.add_heading("修改后内容", level=1)
+                for line in client_content.split('\n'):
+                    if line.strip():
+                        doc.add_paragraph(line)
+                
+                buffer = io.BytesIO()
+                doc.save(buffer)
+                buffer.seek(0)
+                
+                st.download_button(
+                    label="下载文档 - 可发给KOL",
+                    data=buffer,
+                    file_name=f"{output_name}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="download_client"
+                )
+                st.success("文档已生成!")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
-st.caption(f"v2.1 | {RULE_VERSION}")
+st.markdown("### 📋 文件命名规范")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.markdown(f"""
+    **Step 1: KOL原稿**
+```
+    {kol_name or 'KOL名'}_{TODAY}_KOL_第{version_num}版
+```
+    """)
+with col2:
+    st.markdown(f"""
+    **Step 2: 赞意审核后**
+```
+    {kol_name or 'KOL名'}_{TODAY}_KOL-赞意_第{version_num}版
+```
+    """)
+with col3:
+    st.markdown(f"""
+    **Step 3: 客户反馈后**
+```
+    {kol_name or 'KOL名'}_{TODAY}_KOL-赞意-客户_第{version_num}版
+```
+    """)
+
+st.markdown("---")
+st.caption(f"小红书KOL审稿系统 v3.0 | {RULE_VERSION}")
