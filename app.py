@@ -1,4 +1,4 @@
-"""
+
 小红书KOL审稿Agent - 网页版
 基于 Streamlit 构建
 """
@@ -8,22 +8,57 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from enum import Enum
-import yaml
 
 
 # ============================================
-# 审核引擎代码（内嵌）
+# 版本信息
 # ============================================
+RULE_VERSION = "2026年2月4日"
+BRIEF_VERSION = "2026年2月版"
+
+# Brief内容
+BRIEF_CONTENT = """
+### Storyline：
+
+1、以营养/育婴师等专业身份背景出发，收到很多妈妈咨询想带娃出去玩耍，又怕宝宝因户外环境导致敏敏的痛点出发，引出中国初生宝宝敏敏发生率高达40%，点出【宝宝敏敏具体原因】家族遗传史（父母双方都敏感，宝宝敏敏概率飙升到80%）、都是敏感高发的原因，再加上换季户外敏感源增多，宝宝敏感更加严重。
+
+2、分享科学防敏攻略（E.g 常见致敏原因、户外日常防敏攻略）喂养方面强调第一口选奶对提前防敏的重要性，建议可以选择低敏的适度水解配方粉来作为宝宝的第一口配方粉。
+
+3、从品牌实力、水解技术、加强配方、基础配方、粉质、口感等角度介绍产品，综合得出能恩全护是防敏奶粉中的顶配，突出（防敏+自护+长肉）三重喂养实力。
+
+4、主题强化：呼吁宝爸宝妈，想带娃户外肆意玩耍，选对第一口奶粉是关键，建议优选能恩全护。
+
+### 封面注意点：
+
+1、背景文献图封面产品可不出镜，需着重强调第一口防敏科普内容，排版需有创新性
+
+2、需包含"第一口（奶粉）"，"防敏" 关键词
+
+3、不能出现"敏宝"相关文字
+
+4、封面整体风格贴合博主自身主页调性，金色调/有金色元素，画面排版需要体现精致+高级
+
+### 卖点描述（蓝字部分不能改动，黄色字可删减）
+
+**1、敏敏现状：** 我国初生宝宝敏敏率高达40%，要是有父母敏敏史，宝宝敏敏的概率将飙升到80%
+
+**2、专业人士建议：** 不少专业人士建议，可以给宝宝选择适度水解配方粉作为宝宝的第一口配方粉
+
+**3、防敏卖点------水解技术+超多实证：** 拥有多项科学实证的雀巢尖峰水解科技，防敏领域权威德国GINI研究认证，能长效防敏20年，相比于牛奶蛋白致敏性降低1000倍
+
+**4、保护力卖点------超倍自护科技：** 全球创新的超倍自护科技，6种HMO加上明星双菌B.Infantis和Bb-12，协同作用释放高倍的原生保护力，短短28天就能调理好娃的肚肚菌菌环境，保护力能持续15个月
+
+**5、基础营养&口感：** 25种维生素和矿物质，全乳糖的配方口味清淡
+"""
+
 
 class Severity(Enum):
-    """问题严重程度"""
     MUST_FIX = "必改"
     SUGGEST = "建议"
 
 
 @dataclass
 class ReviewIssue:
-    """审核问题"""
     category: str
     severity: Severity
     location: str
@@ -34,12 +69,10 @@ class ReviewIssue:
 
 @dataclass
 class ReviewResult:
-    """审核结果"""
     project_name: str
     kol_name: str
     version: str
     reviewer: str
-    
     must_fix_issues: List[ReviewIssue] = field(default_factory=list)
     suggest_issues: List[ReviewIssue] = field(default_factory=list)
     good_points: List[str] = field(default_factory=list)
@@ -47,7 +80,6 @@ class ReviewResult:
     total_score: float = 0.0
 
 
-# 审核规则（内嵌配置）
 REVIEW_RULES = {
     "project_info": {
         "name": "能恩全护小红书达人种草",
@@ -56,7 +88,6 @@ REVIEW_RULES = {
     "required_keywords": {
         "标题": ["适度水解", "防敏", "科普"],
         "正文": ["适度水解", "防敏", "能恩全护"],
-        "封面": ["适度水解", "防敏", "科普"]
     },
     "forbidden_words": {
         "禁止词": ["敏宝", "奶瓶", "奶嘴", "新生儿", "过敏", "疾病"],
@@ -66,7 +97,6 @@ REVIEW_RULES = {
     "selling_points_exact": {
         "防敏水解技术": [
             "多项科学实证的雀巢尖峰水解技术",
-            "温和的适度水解小分子牛奶蛋白",
             "防敏领域权威德国GINI研究认证",
             "能长效防敏20年",
             "相比于牛奶蛋白致敏性降低1000倍"
@@ -84,7 +114,6 @@ REVIEW_RULES = {
         ]
     },
     "structure_requirements": {
-        "标题数量": 3,
         "正文字数上限": 900,
         "话题标签数量": 10,
         "必提tag": [
@@ -102,7 +131,6 @@ REVIEW_RULES = {
     }
 }
 
-# 禁词替换建议
 FORBIDDEN_SUGGESTIONS = {
     "敏宝": "敏感体质宝宝",
     "奶瓶": "喂养工具",
@@ -120,8 +148,6 @@ FORBIDDEN_SUGGESTIONS = {
 
 
 class ContentParser:
-    """内容解析器"""
-    
     def __init__(self, content: str):
         self.raw_content = content
         self.titles: List[str] = []
@@ -131,19 +157,10 @@ class ContentParser:
     
     def _parse(self):
         lines = self.raw_content.strip().split('\n')
-        
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            
-            # 检测标题
-            if len(self.titles) < 3 and len(line) < 50 and not line.startswith('#'):
-                if len(self.body_paragraphs) == 0:
-                    self.titles.append(line)
-                    continue
-            
-            # 检测话题标签
             tags_in_line = re.findall(r'#[\w\u4e00-\u9fff]+', line)
             if tags_in_line:
                 self.tags.extend(tags_in_line)
@@ -162,17 +179,12 @@ class ContentParser:
         return '\n'.join(self.body_paragraphs)
     
     @property
-    def title_text(self) -> str:
-        return ' '.join(self.titles)
-    
-    @property
     def word_count(self) -> int:
         chinese_chars = re.findall(r'[\u4e00-\u9fff]', self.body_text)
         return len(chinese_chars)
 
 
 def review_content(content: str, kol_name: str, version: str, reviewer: str) -> ReviewResult:
-    """执行审核"""
     result = ReviewResult(
         project_name=REVIEW_RULES["project_info"]["name"],
         kol_name=kol_name,
@@ -185,17 +197,6 @@ def review_content(content: str, kol_name: str, version: str, reviewer: str) -> 
     
     # 1. 检查必须关键词
     required = rules.get('required_keywords', {})
-    for keyword in required.get('标题', []):
-        if keyword not in parser.title_text:
-            result.must_fix_issues.append(ReviewIssue(
-                category="关键词缺失",
-                severity=Severity.MUST_FIX,
-                location="标题",
-                original_text=parser.title_text[:50] if parser.title_text else "（空）",
-                problem=f"标题缺少必须关键词「{keyword}」",
-                suggestion=f"请在标题中加入「{keyword}」"
-            ))
-    
     for keyword in required.get('正文', []):
         if keyword not in parser.body_text:
             result.must_fix_issues.append(ReviewIssue(
@@ -212,7 +213,6 @@ def review_content(content: str, kol_name: str, version: str, reviewer: str) -> 
     for category, words in forbidden.items():
         for word in words:
             if word in parser.full_text:
-                # 获取上下文
                 idx = parser.full_text.find(word)
                 start = max(0, idx - 10)
                 end = min(len(parser.full_text), idx + len(word) + 10)
@@ -256,19 +256,6 @@ def review_content(content: str, kol_name: str, version: str, reviewer: str) -> 
     # 4. 检查结构
     struct_req = rules.get('structure_requirements', {})
     
-    # 标题数量
-    required_titles = struct_req.get('标题数量', 3)
-    if len(parser.titles) < required_titles:
-        result.must_fix_issues.append(ReviewIssue(
-            category="结构问题",
-            severity=Severity.MUST_FIX,
-            location="标题",
-            original_text=f"当前：{len(parser.titles)}个",
-            problem=f"标题数量不足（要求{required_titles}个）",
-            suggestion=f"请补充标题，共需{required_titles}个"
-        ))
-    
-    # 字数
     max_words = struct_req.get('正文字数上限', 900)
     if parser.word_count > max_words:
         result.must_fix_issues.append(ReviewIssue(
@@ -280,7 +267,6 @@ def review_content(content: str, kol_name: str, version: str, reviewer: str) -> 
             suggestion=f"请精简内容，删减{parser.word_count - max_words}字"
         ))
     
-    # 标签数量
     required_tags = struct_req.get('话题标签数量', 10)
     if len(parser.tags) < required_tags:
         result.suggest_issues.append(ReviewIssue(
@@ -292,7 +278,6 @@ def review_content(content: str, kol_name: str, version: str, reviewer: str) -> 
             suggestion=f"请补充{required_tags - len(parser.tags)}个话题标签"
         ))
     
-    # 必提标签
     required_tags_list = struct_req.get('必提tag', [])
     missing_tags = [tag for tag in required_tags_list if tag not in parser.tags]
     if missing_tags:
@@ -329,7 +314,6 @@ def review_content(content: str, kol_name: str, version: str, reviewer: str) -> 
     result.scores['结构完整性'] = max(0, 1 - structure_issues * 0.25)
     result.scores['口吻风格'] = 1.0 if has_professional else 0.7
     
-    # 计算总分
     weights = rules.get('scoring_weights', {})
     total = 0
     for key, weight in weights.items():
@@ -337,7 +321,6 @@ def review_content(content: str, kol_name: str, version: str, reviewer: str) -> 
         total += score * weight
     result.total_score = round(total * 100, 1)
     
-    # 识别做得好的地方
     if has_professional:
         result.good_points.append("专业身份明确")
     if result.scores.get('卖点覆盖', 0) > 0.5:
@@ -358,7 +341,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# 自定义CSS
 st.markdown("""
 <style>
     .main-header {
@@ -370,67 +352,42 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
-    .score-card {
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-    }
-    .score-high { background-color: #d4edda; }
-    .score-medium { background-color: #fff3cd; }
-    .score-low { background-color: #f8d7da; }
-    .issue-card {
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-radius: 8px;
-        border-left: 4px solid;
-    }
-    .issue-must-fix {
-        background-color: #fff5f5;
-        border-color: #e53e3e;
-    }
-    .issue-suggest {
-        background-color: #fffaf0;
-        border-color: #dd6b20;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# 标题
 st.markdown('<p class="main-header">🔍 小红书KOL审稿系统</p>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; color: gray;">能恩全护 · 小红书达人种草项目</p>', unsafe_allow_html=True)
 
 st.markdown("---")
 
-# 输入区域
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown("### 📋 当前审核规则")
+    st.info(f"✅ 已上传审核规则：**{RULE_VERSION}**")
+with col2:
+    st.markdown("### 📝 当前Brief")
+    st.info(f"✅ 已上传达人Brief：**{BRIEF_VERSION}**")
 
+with st.expander("📖 点击查看完整Brief内容"):
+    st.markdown(BRIEF_CONTENT)
+
+st.markdown("---")
+
+col1, col2, col3 = st.columns(3)
 with col1:
     kol_name = st.text_input("👤 KOL名称", placeholder="例如：小红薯妈妈")
-
 with col2:
     version = st.selectbox("📌 版本号", ["V1", "V2", "V3", "V4", "V5", "FINAL"])
-
 with col3:
     reviewer = st.selectbox("👁️ 审核方", ["赞意", "客户"])
 
-# 稿件输入
 st.markdown("### 📝 稿件内容")
 content = st.text_area(
     "请粘贴KOL稿件内容（包含标题、正文、话题标签）",
     height=300,
-    placeholder="""示例格式：
-
-适度水解奶粉怎么选？防敏科普来了！
-
-作为持证营养师，我来分享一下...
-
-（正文内容）
-
-#能恩全护 #适度水解 #防敏奶粉 ...
-"""
+    placeholder="粘贴稿件内容..."
 )
 
-# 审核按钮
 if st.button("🔍 开始审核", type="primary", use_container_width=True):
     if not kol_name:
         st.error("请输入KOL名称")
@@ -443,9 +400,7 @@ if st.button("🔍 开始审核", type="primary", use_container_width=True):
         st.markdown("---")
         st.markdown("## 📊 审核报告")
         
-        # 基本信息和评分
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
             st.metric("KOL", f"@{result.kol_name}")
         with col2:
@@ -461,7 +416,6 @@ if st.button("🔍 开始审核", type="primary", use_container_width=True):
             else:
                 st.metric("综合评分", f"{score}% ⚠️")
         
-        # 分数详情
         st.markdown("### 📈 各项得分")
         score_cols = st.columns(len(result.scores))
         for i, (key, score) in enumerate(result.scores.items()):
@@ -470,7 +424,6 @@ if st.button("🔍 开始审核", type="primary", use_container_width=True):
                 emoji = "✅" if score_pct >= 80 else "⚠️" if score_pct >= 60 else "❌"
                 st.metric(key, f"{emoji} {score_pct}%")
         
-        # 必改项
         st.markdown("### ❌ 必改项")
         if result.must_fix_issues:
             for i, issue in enumerate(result.must_fix_issues, 1):
@@ -482,27 +435,19 @@ if st.button("🔍 开始审核", type="primary", use_container_width=True):
         else:
             st.success("🎉 没有必改项！")
         
-        # 建议项
         st.markdown("### 💡 建议优化")
         if result.suggest_issues:
             for i, issue in enumerate(result.suggest_issues, 1):
                 with st.expander(f"{i}. 【{issue.category}】{issue.location}"):
-                    if issue.original_text:
-                        st.markdown(f"**原文**：`{issue.original_text}`")
                     st.markdown(f"**问题**：{issue.problem}")
                     st.info(f"**建议**：{issue.suggestion}")
         else:
             st.info("暂无优化建议")
         
-        # 做得好的地方
         st.markdown("### ✅ 做得好的地方")
-        if result.good_points:
-            for point in result.good_points:
-                st.markdown(f"- {point}")
-        else:
-            st.markdown("- 继续加油！")
+        for point in result.good_points:
+            st.markdown(f"- {point}")
         
-        # 总结
         st.markdown("### 📝 审核总结")
         if result.total_score >= 90:
             st.success("✨ **优秀**：稿件质量很高，稍作调整即可通过！")
@@ -513,9 +458,7 @@ if st.button("🔍 开始审核", type="primary", use_container_width=True):
         else:
             st.error("❌ **需大改**：问题较多，建议参考brief重新撰写。")
         
-        # 下载报告
         report_text = f"""# 审核报告
-
 ## 基础信息
 - 项目：{result.project_name}
 - KOL：@{result.kol_name}
@@ -523,18 +466,12 @@ if st.button("🔍 开始审核", type="primary", use_container_width=True):
 - 审核方：{result.reviewer}
 - 综合评分：{result.total_score}%
 - 审核时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}
+- 审核规则版本：{RULE_VERSION}
+- Brief版本：{BRIEF_VERSION}
 
 ## 必改项（{len(result.must_fix_issues)}条）
 """
         for i, issue in enumerate(result.must_fix_issues, 1):
-            report_text += f"\n{i}. 【{issue.category}】{issue.location}\n"
-            if issue.original_text:
-                report_text += f"   原文：{issue.original_text}\n"
-            report_text += f"   问题：{issue.problem}\n"
-            report_text += f"   建议：{issue.suggestion}\n"
-        
-        report_text += f"\n## 建议优化（{len(result.suggest_issues)}条）\n"
-        for i, issue in enumerate(result.suggest_issues, 1):
             report_text += f"\n{i}. 【{issue.category}】{issue.location}\n"
             report_text += f"   问题：{issue.problem}\n"
             report_text += f"   建议：{issue.suggestion}\n"
@@ -546,11 +483,10 @@ if st.button("🔍 开始审核", type="primary", use_container_width=True):
             mime="text/markdown"
         )
 
-# 页脚
 st.markdown("---")
 st.markdown(
-    '<p style="text-align: center; color: gray; font-size: 0.8rem;">'
-    '小红书KOL审稿系统 v1.0 | 能恩全护项目专用'
-    '</p>', 
+    f'<p style="text-align: center; color: gray; font-size: 0.8rem;">'
+    f'小红书KOL审稿系统 v1.0 | 审核规则：{RULE_VERSION} | Brief：{BRIEF_VERSION}'
+    f'</p>', 
     unsafe_allow_html=True
 )
