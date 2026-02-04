@@ -127,7 +127,17 @@ def analyze_client_feedback(original, client_modified):
     return call_claude_api(prompt)
 
 def create_annotated_docx(content, issues, selected_issues, kol_name, version, step, extra_comments=None, selling_inputs=None):
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
     doc = Document()
+
+    # 设置默认字体
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = 'PingFang SC'
+    font.size = Pt(11)
+
     if step == 2:
         title = f"{kol_name}_{TODAY}_KOL-赞意_第{version}版"
         subtitle = "赞意审核批注版"
@@ -135,34 +145,121 @@ def create_annotated_docx(content, issues, selected_issues, kol_name, version, s
         title = f"{kol_name}_{TODAY}_KOL-赞意-客户_第{version}版"
         subtitle = "客户反馈处理版"
 
-    doc.add_heading(title, 0)
-    doc.add_paragraph(f"审核时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    doc.add_paragraph(f"文档类型: {subtitle}")
-    doc.add_paragraph("---")
+    # 标题
+    h = doc.add_heading(title, 0)
+    for run in h.runs:
+        run.font.color.rgb = RGBColor(0x2C, 0x3E, 0x6B)
 
+    # 基本信息
+    info = doc.add_paragraph()
+    info_run = info.add_run(f"审核时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  文档类型: {subtitle}")
+    info_run.font.size = Pt(9)
+    info_run.font.color.rgb = RGBColor(0x71, 0x71, 0x71)
+
+    # 分隔线
+    doc.add_paragraph("─" * 50)
+
+    # ===== 审核意见区域 =====
     if selected_issues:
-        doc.add_heading("审核意见（已采纳）", level=1)
+        h2 = doc.add_heading("赞意审核意见（已采纳）", level=1)
+        for run in h2.runs:
+            run.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)  # 酒红色
+
+        issue_types_cn = {"keyword": "关键词", "forbidden": "禁词", "selling": "卖点", "structure": "结构", "tag": "标签"}
+
         for i, idx in enumerate(selected_issues):
             if idx < len(issues):
                 issue = issues[idx]
+                issue_type = issue.get("type", "")
+                type_cn = issue_types_cn.get(issue_type, "")
+
                 p = doc.add_paragraph()
-                p.add_run(f"{i+1}. {issue['desc']}").bold = True
-                p.add_run(f"\n   建议: {issue['suggestion']}")
-                # 如果是卖点类且有自定义写法
+
+                # 类型标签 - 酒红色背景
+                tag_run = p.add_run(f"【{type_cn}】")
+                tag_run.bold = True
+                tag_run.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)
+                tag_run.font.size = Pt(11)
+
+                # 问题描述 - 加粗
+                desc_run = p.add_run(f" {issue['desc']}")
+                desc_run.bold = True
+                desc_run.font.size = Pt(11)
+
+                # 建议 - 蓝色
+                sug_run = p.add_run(f"\n    建议: {issue['suggestion']}")
+                sug_run.font.color.rgb = RGBColor(0x2C, 0x3E, 0x6B)
+                sug_run.font.size = Pt(10)
+
+                # 卖点自定义写法 - 绿色
                 sp_key = f"sp_{idx}"
                 if selling_inputs and sp_key in selling_inputs and selling_inputs[sp_key]:
-                    p.add_run(f"\n   推荐表达: {selling_inputs[sp_key]}")
-        doc.add_paragraph("---")
+                    custom_run = p.add_run(f"\n    ★ 推荐表达: {selling_inputs[sp_key]}")
+                    custom_run.font.color.rgb = RGBColor(0x0B, 0x6E, 0x2F)
+                    custom_run.bold = True
+                    custom_run.font.size = Pt(10)
 
+                # 段落底部加间距
+                p.paragraph_format.space_after = Pt(8)
+
+        doc.add_paragraph("─" * 50)
+
+    # ===== 补充意见 =====
     if extra_comments:
-        doc.add_heading("补充意见", level=1)
-        doc.add_paragraph(extra_comments)
-        doc.add_paragraph("---")
+        h3 = doc.add_heading("赞意补充意见", level=1)
+        for run in h3.runs:
+            run.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)
 
-    doc.add_heading("稿件内容", level=1)
+        p = doc.add_paragraph()
+        r = p.add_run(extra_comments)
+        r.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)
+        r.font.size = Pt(11)
+        doc.add_paragraph("─" * 50)
+
+    # ===== 稿件原文 =====
+    h4 = doc.add_heading("稿件内容", level=1)
+    for run in h4.runs:
+        run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    # 在稿件中高亮标注禁词
     for line in content.split('\n'):
         if line.strip():
-            doc.add_paragraph(line)
+            p = doc.add_paragraph()
+            remaining = line
+            # 检查这行是否包含禁词
+            has_forbidden = False
+            for cat, words in REVIEW_RULES["forbidden_words"].items():
+                for w in words:
+                    if w in remaining:
+                        has_forbidden = True
+                        break
+                if has_forbidden:
+                    break
+
+            if has_forbidden:
+                # 逐词检查并高亮
+                pos = 0
+                segments = []
+                temp = remaining
+                for cat, words in REVIEW_RULES["forbidden_words"].items():
+                    for w in words:
+                        temp = temp.replace(w, f"\x00{w}\x01")
+                parts = temp.split('\x00')
+                for part in parts:
+                    if '\x01' in part:
+                        forbidden_word, rest = part.split('\x01', 1)
+                        # 禁词 - 红色加粗
+                        r = p.add_run(forbidden_word)
+                        r.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+                        r.bold = True
+                        r.font.highlight_color = 6  # 黄色高亮
+                        if rest:
+                            p.add_run(rest)
+                    else:
+                        if part:
+                            p.add_run(part)
+            else:
+                p.add_run(line).font.size = Pt(11)
 
     buffer = io.BytesIO()
     doc.save(buffer)
