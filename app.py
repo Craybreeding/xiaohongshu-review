@@ -9,54 +9,168 @@ import urllib.request
 
 TODAY = datetime.now().strftime("%Y%m%d")
 
-# 默认审稿规则（可被上传的JSON覆盖）
-DEFAULT_RULES = {
-    "version": "2026-02-04",
-    "required_keywords": ["适度水解", "防敏", "能恩全护"],
-    "forbidden_words": {
-        "禁止词": ["敏宝", "奶瓶", "奶嘴", "新生儿", "过敏", "疾病"],
-        "禁疗效": ["预防", "生长", "发育", "免疫"],
-        "禁绝对化": ["最好", "最佳", "TOP1", "No.1"]
-    },
-    "allowed_exceptions": ["第一口奶粉", "第一口配方粉"],
-    "selling_points": [
-        "多项科学实证的雀巢尖峰水解技术",
-        "防敏领域权威德国GINI研究认证",
-        "能长效防敏20年",
-        "相比于牛奶蛋白致敏性降低1000倍",
-        "全球创新的超倍自护科技",
-        "6种HMO加上明星双菌B.Infantis和Bb-12",
-        "协同作用释放高倍的原生保护力",
-        "短短28天就能调理好娃的肚肚菌菌环境",
-        "保护力能持续15个月",
-        "25种维生素和矿物质",
-        "全乳糖的配方口味清淡"
-    ],
-    "required_tags": ["#能恩全护", "#能恩全护水奶", "#适度水解", "#适度水解奶粉", "#适度水解奶粉推荐", "#防敏奶粉", "#第一口奶粉", "#雀巢适度水解"],
-    "max_words": 900,
-    "min_tags": 10,
-    "suggestions": {"敏宝": "敏感体质宝宝", "新生儿": "初生宝宝", "过敏": "敏敏", "预防": "远离", "生长": "成长", "发育": "成长", "免疫": "保护力"}
+# ========== 审核规则常量 ==========
+REQUIRED_TAGS = [
+    "#能恩全护", "#能恩全护水奶", "#适度水解", "#适度水解奶粉",
+    "#适度水解奶粉推荐", "#防敏奶粉", "#第一口奶粉", "#雀巢适度水解"
+]
+
+TITLE_KEYWORDS = ["适度水解", "防敏", "科普"]
+BODY_KEYWORDS = ["适度水解", "防敏", "能恩全护"]
+COVER_KEYWORDS = ["适度水解", "防敏", "科普"]
+
+FORBIDDEN_WORDS = {
+    "禁止词": ["敏宝", "奶瓶", "奶嘴", "新生儿", "过敏", "疾病"],
+    "禁疗效表述": ["预防", "生长", "发育", "免疫"],
+    "禁绝对化": ["最", "第一", "TOP1"],
 }
 
-# 默认内容切角方向
-DEFAULT_ANGLES = {
-    "防敏科普": "以科普形式介绍适度水解奶粉的防敏原理，强调雀巢尖峰水解技术和GINI研究认证，语气专业但易懂。",
-    "妈妈分享": "以妈妈第一人称分享自己给宝宝选奶粉的经历，强调产品体验和宝宝的变化，语气亲切真实。",
-    "产品测评": "以测评博主角度分析产品成分、配方优势，强调数据和对比，语气客观专业。",
-    "新手妈妈攻略": "面向新手妈妈群体，以攻略形式介绍如何选择第一口奶粉，强调防敏的重要性，语气温暖引导。",
+FORBIDDEN_EXCEPTIONS = {
+    "第一": ["第一口奶粉", "第一口配方粉"],
+    "最": ["最近", "最后", "最终", "最初", "最多"],
 }
 
-def get_rules():
-    """获取当前生效的审稿规则"""
-    if 'review_rules' in st.session_state:
-        return st.session_state.review_rules
-    return DEFAULT_RULES
+FORBIDDEN_REPLACEMENTS = {
+    "过敏": "敏敏", "敏宝": "敏感体质宝宝",
+    "新生儿": "初生宝宝", "预防": "防敏",
+    "生长": "成长", "发育": "噌噌长",
+    "免疫": "保护力", "疾病": "不适",
+}
 
-def get_suggestions():
-    """获取禁词替换建议"""
-    rules = get_rules()
-    return rules.get("suggestions", DEFAULT_RULES["suggestions"])
+# 必提需润色卖点 (4大方向10小方向)
+PARAPHRASE_SELLING_POINTS = [
+    {"category": "敏敏背景", "idx": 1,
+     "text": "我国初生宝宝敏敏率高达40%，要是有父母敏敏史，宝宝敏敏的概率将飙升到80%",
+     "fragment": "敏敏率高达40%"},
+    {"category": "防敏-水解技术", "idx": 2,
+     "text": "易敏的大分子牛奶蛋白切割成温和的适度水解小分子牛奶蛋白，精准去掉致敏片段的同时，又完整保留了蛋白有益营养",
+     "fragment": "切割成温和的适度水解小分子"},
+    {"category": "防敏-水解技术", "idx": 3,
+     "text": "全球专业人士优先推荐呢",
+     "fragment": "全球专业人士优先推荐"},
+    {"category": "自护力", "idx": 4,
+     "text": "6种HMO加上明星双菌B.Infantis 和 Bb-12，两者强强联合，协同作用释放高倍的原生保护力",
+     "fragment": "两者强强联合"},
+    {"category": "自护力", "idx": 5,
+     "text": "短短28天就能调理好娃的肚肚菌菌环境，从肚肚到全身都建起坚固的防护屏障",
+     "fragment": "从肚肚到全身"},
+    {"category": "自护力", "idx": 6,
+     "text": "保护力能持续15个月，助力娃成长",
+     "fragment": "助力娃成长"},
+    {"category": "自护力", "idx": 7,
+     "text": "四维成长曲线特别出色",
+     "fragment": "四维成长曲线"},
+    {"category": "基础营养", "idx": 8,
+     "text": "基础营养也很抗打",
+     "fragment": "基础营养也很抗打"},
+    {"category": "基础营养", "idx": 9,
+     "text": "25种维生素和矿物质拉满",
+     "fragment": "维生素和矿物质拉满"},
+    {"category": "基础营养", "idx": 10,
+     "text": "全乳糖的配方口味清淡，宝宝爱喝",
+     "fragment": "全乳糖的配方口味清淡，宝宝爱喝"},
+]
 
+# 必提不可修改卖点 (3大切角10小切角)
+FIXED_SELLING_POINTS = [
+    {"category": "防敏-水解技术", "idx": 1, "text": "多项科学实证的雀巢尖峰水解技术"},
+    {"category": "防敏-水解技术", "idx": 2, "text": "温和的适度水解小分子牛奶蛋白"},
+    {"category": "防敏-水解技术", "idx": 3, "text": "防敏领域权威德国GINI研究认证，能长效防敏20年，相比于牛奶蛋白致敏性降低1000倍"},
+    {"category": "自护力", "idx": 4, "text": "采用了全球创新的超倍自护科技"},
+    {"category": "自护力", "idx": 5, "text": "6种HMO加上明星双菌B.Infantis 和 Bb-12"},
+    {"category": "自护力", "idx": 6, "text": "协同作用释放高倍的原生保护力"},
+    {"category": "自护力", "idx": 7, "text": "短短28天就能调理好娃的肚肚菌菌环境"},
+    {"category": "自护力", "idx": 8, "text": "保护力能持续15个月"},
+    {"category": "基础营养", "idx": 9, "text": "25种维生素和矿物质"},
+    {"category": "基础营养", "idx": 10, "text": "全乳糖的配方口味清淡"},
+]
+
+# 允许删减的卖点
+OPTIONAL_SELLING_POINTS = [
+    {"category": "防敏-水解技术",
+     "text": "欧盟认可及全球30+科学实证背书，硬实力真材实料摆出来!",
+     "fragment": "欧盟认可"},
+    {"category": "基础营养",
+     "text": "早期配方还搭配了牛磺酸、胆碱、核苷酸等关键营养。不添加蔗、香精这些不友好成分。",
+     "fragment": "牛磺酸、胆碱、核苷酸"},
+]
+
+# 卖点顺序锚点
+ORDER_ANCHORS = {
+    "防敏-水解技术": ["水解技术", "尖峰水解", "GINI", "致敏性降低", "适度水解小分子"],
+    "自护力": ["超倍自护", "HMO", "双菌", "B.Infantis", "原生保护力"],
+    "基础营养": ["维生素和矿物质", "全乳糖"],
+}
+
+# 标准卖点示例
+SELLING_POINT_EXAMPLE = """我国初生宝宝敏敏率高达40%，要是有父母敏敏史，宝宝敏敏的概率将飙升到80%；敏敏高发的原因（未经产道挤压、养宠专业人士建议：不少专业人士建议，可以给宝宝选择适度水解配方粉作为宝宝的第一口配方粉
+
+拥有多项科学实证的雀巢尖峰水解科技，就像给蛋白装了精准切割器，把易敏的大分子牛奶蛋白切割成温和的100%适度水解小分子牛奶蛋白，精准去掉致敏片段的同时，又完整保留了蛋白有益营养，更亲和宝宝娇肚肚!不仅有防敏领域权威德国GINI研究认证，能长效防敏20年，还有欧盟认可及全球30+科学实证背书，相比于牛奶蛋白致敏性降低1000倍，硬实力真材实料摆出来!怪不得全球专业人士优先推荐呢！/全球专业人士优先推荐是有道理的
+
+它采用了全球创新的"超倍自护科技"，其中6种HMO加上明星双菌B.Infantis 和 Bb-12，两者强强联合，协同作用释放高倍的原生保护力！短短28天就能调理好娃的肚肚菌菌环境，从肚肚到全身都建起坚固的防护屏障。更关键的是，这份保护力能持续15个月，完美覆盖宝宝的黄金发育期，助力娃噌长、稳稳长~ 有它助力，娃的四维成长曲线特别出色!
+
+基础营养也很抗打，25种维生素和矿物质拉满，早期配方还搭配了牛磺酸、胆碱、核苷酸等关键营养。全乳糖的配方口味清淡，不添加蔗、香精这些不友好成分，宝宝爱喝，妈妈放心。"""
+
+# 人话修改 Prompt
+RENHUA_PROMPT = """你是小红书顶级爆文写手，擅长把硬广写成真实分享。现在帮我改写【能恩全护奶粉】的KOL稿件。
+
+⚠️ 【最重要的3个硬性要求 - 必须全部满足】⚠️
+1. 正文字数必须在800-900字之间（这是最重要的！太短或太长都不行）
+2. 必须有强烈的小红书活人感、爆文感、真实分享感
+3. 必须包含下面10句话术（可以自然融入，但字字不能改）
+
+【10句必须原封不动出现的话术】
+① 多项科学实证的雀巢尖峰水解技术
+② 温和的适度水解小分子牛奶蛋白
+③ 防敏领域权威德国GINI研究认证，能长效防敏20年，相比于牛奶蛋白致敏性降低1000倍
+④ 采用了全球创新的超倍自护科技
+⑤ 6种HMO加上明星双菌B.Infantis 和 Bb-12
+⑥ 协同作用释放高倍的原生保护力
+⑦ 短短28天就能调理好娃的肚肚菌菌环境
+⑧ 保护力能持续15个月
+⑨ 25种维生素和矿物质
+⑩ 全乳糖的配方口味清淡
+
+【小红书爆文写法 - 这才是活人感！】
+🔥 开头要炸：用"姐妹们！""救命！""后悔没早知道！"等情绪钩子开场
+🔥 说人话：把"因此建议"换成"所以我真心推荐"，把"具有"换成"有"
+🔥 像聊天：多用"我""你""咱家娃"，写得像在跟闺蜜分享经验
+🔥 有情绪：加入"说实话""真的绝了""一开始我也担心"等真实感受
+🔥 短句+emoji：每句话不超过20字，适当加💡✨🔥❗等emoji
+🔥 有节奏：用"！"比"。"多，读起来要有激动感
+🔥 结尾要互动："姐妹们冲！""有同款宝宝的妈妈评论区举手🙋‍♀️"
+
+【内容结构】（按这个顺序写，自然过渡）
+1. 开篇钩子：作为育婴师/营养师，说说妈妈们最担心的户外带娃敏敏问题（约70字）
+2. 痛点共鸣：我国初生宝宝敏敏率40%，有家族史飙到80%，太可怕了（约70字）
+3. 科学支招：第一口奶粉选对很关键，推荐适度水解配方（约200字）
+4. 产品种草：重点介绍能恩全护的水解技术、自护力配方、营养成分（约450字，融入10句话术）
+5. 收尾号召：想带娃放心玩，选对奶粉是第一步！（约60字）
+
+【其他要求】
+- 提供3个标题备选（必须含：适度水解、防敏、科普）
+- 提供10个以上话题标签（必须含：#能恩全护 #适度水解 #适度水解奶粉推荐 #第一口奶粉）
+- 卖点顺序：防敏水解技术 → 自护力 → 基础营养
+- 禁词替换：过敏→敏敏，预防→防敏，新生儿→初生宝宝，生长发育→成长
+- 绝对禁止出现：敏宝、奶瓶、奶嘴、疾病、治疗、免疫
+
+【输出格式】
+### 标题备选（3个）
+1. xxx
+2. xxx
+3. xxx
+
+### 正文（800-900字，必须写够！）
+（这里输出完整正文，要有小红书爆文的活人感！）
+
+### 话题标签
+#能恩全护 #适度水解 ...（10个以上）
+
+---
+【需要改写的KOL原稿】
+{content}"""
+
+# ========== 工具函数 ==========
 def read_docx(file):
     doc = Document(io.BytesIO(file.read()))
     text = []
@@ -65,227 +179,291 @@ def read_docx(file):
             text.append(para.text)
     return "\n".join(text)
 
-def parse_content(content):
-    tags = re.findall(r'#[\w\u4e00-\u9fff]+', content)
-    text = re.sub(r'#[\w\u4e00-\u9fff]+', '', content)
-    word_count = len(re.findall(r'[\u4e00-\u9fff]', text))
-    return {"text": content, "tags": tags, "word_count": word_count}
-
-def run_review(content):
-    rules = get_rules()
-    suggestions = get_suggestions()
-    data = parse_content(content)
-    issues = []
-
-    for kw in rules["required_keywords"]:
-        if kw not in data["text"]:
-            issues.append({"type": "keyword", "desc": f"缺少关键词: {kw}", "suggestion": f"请加入「{kw}」"})
-
-    exceptions = rules.get("allowed_exceptions", [])
-    for cat, words in rules["forbidden_words"].items():
-        for w in words:
-            if w in data["text"]:
-                idx = data["text"].find(w)
-                ctx = data["text"][max(0,idx-10):idx+len(w)+10]
-                if not any(e in ctx for e in exceptions):
-                    sug = suggestions.get(w, "删除")
-                    issues.append({"type": "forbidden", "desc": f"禁词「{w}」", "context": ctx, "suggestion": f"改为「{sug}」"})
-
-    for sp in rules["selling_points"]:
-        if sp not in data["text"]:
-            issues.append({"type": "selling", "desc": f"缺少卖点: {sp}", "suggestion": f"请加入: {sp}"})
-
-    if data["word_count"] > rules["max_words"]:
-        issues.append({"type": "structure", "desc": f"字数超限: {data['word_count']}/{rules['max_words']}", "suggestion": "请精简"})
-
-    if len(data["tags"]) < rules["min_tags"]:
-        issues.append({"type": "structure", "desc": f"标签不足: {len(data['tags'])}/{rules['min_tags']}", "suggestion": "请补充"})
-
-    for t in rules["required_tags"]:
-        if t not in data["tags"]:
-            issues.append({"type": "tag", "desc": f"缺少标签: {t}", "suggestion": f"请加入 {t}"})
-
-    return issues, data
-
 def call_llm_api(prompt):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return "Error: 未设置OPENAI_API_KEY环境变量"
     url = "https://api.openai.com/v1/chat/completions"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    data = {"model": "gpt-4o", "max_tokens": 4000, "messages": [{"role": "user", "content": prompt}]}
+    data = {"model": "gpt-4o", "max_tokens": 4000, "temperature": 0.8, "messages": [{"role": "user", "content": prompt}]}
     req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=60) as response:
+        with urllib.request.urlopen(req, timeout=120) as response:
             result = json.loads(response.read().decode('utf-8'))
             return result["choices"][0]["message"]["content"]
     except Exception as e:
         return f"Error: {str(e)}"
 
-def analyze_client_feedback(original, client_modified):
-    prompt = f"""你是小红书KOL稿件审核专家。对比分析客户修改。
+def count_chinese(text):
+    return len(re.findall(r'[\u4e00-\u9fff]', text))
 
-原稿件:
-{original}
+def extract_tags(content):
+    return re.findall(r'#[\w\u4e00-\u9fff]+', content)
 
-客户修改后:
-{client_modified}
-
-审核规则: 禁词包括敏宝、奶瓶、奶嘴、新生儿、过敏、疾病、预防、生长、发育、免疫、最好、最佳。例外:"第一口奶粉"中的"第一"不算禁词。
-
-请分析客户修改了哪些内容,每条是否符合规则,不符合的给建议。
-
-格式:
-===修改分析===
-修改1: [描述]
-状态: 符合/不符合
-建议: [建议]
-
-===总结===
-符合: X条
-需调整: X条
-"""
-    return call_llm_api(prompt)
-
-def create_annotated_docx(content, issues, selected_issues, kol_name, version, step, extra_comments=None, selling_inputs=None):
-    from docx.shared import Pt, RGBColor, Inches
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-    doc = Document()
-
-    # 设置默认字体
-    style = doc.styles['Normal']
-    font = style.font
-    font.name = 'PingFang SC'
-    font.size = Pt(11)
-
-    if step == 2:
-        title = f"{kol_name}_{TODAY}_KOL-赞意_第{version}版"
-        subtitle = "赞意审核批注版"
-    else:
-        title = f"{kol_name}_{TODAY}_KOL-赞意-客户_第{version}版"
-        subtitle = "客户反馈处理版"
-
-    # 标题
-    h = doc.add_heading(title, 0)
-    for run in h.runs:
-        run.font.color.rgb = RGBColor(0x2C, 0x3E, 0x6B)
-
-    # 基本信息
-    info = doc.add_paragraph()
-    info_run = info.add_run(f"审核时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  文档类型: {subtitle}")
-    info_run.font.size = Pt(9)
-    info_run.font.color.rgb = RGBColor(0x71, 0x71, 0x71)
-
-    # 分隔线
-    doc.add_paragraph("─" * 50)
-
-    # ===== 审核意见区域 =====
-    if selected_issues:
-        h2 = doc.add_heading("赞意审核意见（已采纳）", level=1)
-        for run in h2.runs:
-            run.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)  # 酒红色
-
-        issue_types_cn = {"keyword": "关键词", "forbidden": "禁词", "selling": "卖点", "structure": "结构", "tag": "标签"}
-
-        for i, idx in enumerate(selected_issues):
-            if idx < len(issues):
-                issue = issues[idx]
-                issue_type = issue.get("type", "")
-                type_cn = issue_types_cn.get(issue_type, "")
-
-                p = doc.add_paragraph()
-
-                # 类型标签 - 酒红色背景
-                tag_run = p.add_run(f"【{type_cn}】")
-                tag_run.bold = True
-                tag_run.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)
-                tag_run.font.size = Pt(11)
-
-                # 问题描述 - 加粗
-                desc_run = p.add_run(f" {issue['desc']}")
-                desc_run.bold = True
-                desc_run.font.size = Pt(11)
-
-                # 建议 - 蓝色
-                sug_run = p.add_run(f"\n    建议: {issue['suggestion']}")
-                sug_run.font.color.rgb = RGBColor(0x2C, 0x3E, 0x6B)
-                sug_run.font.size = Pt(10)
-
-                # 卖点自定义写法 - 绿色
-                sp_key = f"sp_{idx}"
-                if selling_inputs and sp_key in selling_inputs and selling_inputs[sp_key]:
-                    custom_run = p.add_run(f"\n    ★ 推荐表达: {selling_inputs[sp_key]}")
-                    custom_run.font.color.rgb = RGBColor(0x0B, 0x6E, 0x2F)
-                    custom_run.bold = True
-                    custom_run.font.size = Pt(10)
-
-                # 段落底部加间距
-                p.paragraph_format.space_after = Pt(8)
-
-        doc.add_paragraph("─" * 50)
-
-    # ===== 补充意见 =====
-    if extra_comments:
-        h3 = doc.add_heading("赞意补充意见", level=1)
-        for run in h3.runs:
-            run.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)
-
-        p = doc.add_paragraph()
-        r = p.add_run(extra_comments)
-        r.font.color.rgb = RGBColor(0x8B, 0x45, 0x57)
-        r.font.size = Pt(11)
-        doc.add_paragraph("─" * 50)
-
-    # ===== 稿件原文 =====
-    h4 = doc.add_heading("稿件内容", level=1)
-    for run in h4.runs:
-        run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-
-    # 在稿件中高亮标注禁词
+def extract_title(content):
     for line in content.split('\n'):
-        if line.strip():
-            p = doc.add_paragraph()
-            remaining = line
-            # 检查这行是否包含禁词
-            has_forbidden = False
-            for cat, words in get_rules()["forbidden_words"].items():
-                for w in words:
-                    if w in remaining:
-                        has_forbidden = True
-                        break
-                if has_forbidden:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            return line
+    return ""
+
+def check_forbidden_word(content, word):
+    """检查禁词是否出现，返回违规位置列表"""
+    exceptions = FORBIDDEN_EXCEPTIONS.get(word, [])
+    violations = []
+    start = 0
+    while True:
+        idx = content.find(word, start)
+        if idx == -1:
+            break
+        ctx = content[max(0, idx - 10):idx + len(word) + 10]
+        is_exception = any(exc in ctx for exc in exceptions)
+        if not is_exception:
+            violations.append({"pos": idx, "context": ctx})
+        start = idx + 1
+    return violations
+
+def auto_insert_fixed_phrases(content):
+    """自动插入缺失的不可修改话术，返回修复后的内容"""
+    # 检查哪些话术缺失
+    missing_by_cat = {"防敏-水解技术": [], "自护力": [], "基础营养": []}
+    for item in FIXED_SELLING_POINTS:
+        if item["text"] not in content:
+            missing_by_cat[item["category"]].append(item["text"])
+
+    # 如果没有缺失，直接返回
+    total_missing = sum(len(v) for v in missing_by_cat.values())
+    if total_missing == 0:
+        return content, 0
+
+    # 找到正文部分
+    body_match = re.search(r'###\s*正文[^#]*?\n(.*?)(?=###|$)', content, re.DOTALL)
+    if not body_match:
+        # 如果没有明确的正文标记，尝试在整个内容中插入
+        body_match = re.search(r'([\s\S]+)', content)
+
+    if not body_match:
+        return content, 0
+
+    body = body_match.group(1)
+    modified_body = body
+    inserted = 0
+
+    # 定义每个类别的锚点关键词（用于找到插入位置）
+    category_anchors = {
+        "防敏-水解技术": ["水解", "防敏", "蛋白", "GINI", "致敏"],
+        "自护力": ["自护", "HMO", "双菌", "保护力", "菌菌", "肚肚"],
+        "基础营养": ["营养", "维生素", "乳糖", "口味"],
+    }
+
+    for cat, missing_phrases in missing_by_cat.items():
+        if not missing_phrases:
+            continue
+
+        # 找到该类别的锚点位置
+        anchors = category_anchors.get(cat, [])
+        best_pos = -1
+        for anchor in anchors:
+            pos = modified_body.find(anchor)
+            if pos != -1:
+                # 找到这个锚点所在句子的末尾
+                end_pos = modified_body.find("。", pos)
+                if end_pos == -1:
+                    end_pos = modified_body.find("！", pos)
+                if end_pos == -1:
+                    end_pos = modified_body.find("\n", pos)
+                if end_pos != -1:
+                    best_pos = end_pos + 1
                     break
 
-            if has_forbidden:
-                # 逐词检查并高亮
-                pos = 0
-                segments = []
-                temp = remaining
-                for cat, words in get_rules()["forbidden_words"].items():
-                    for w in words:
-                        temp = temp.replace(w, f"\x00{w}\x01")
-                parts = temp.split('\x00')
-                for part in parts:
-                    if '\x01' in part:
-                        forbidden_word, rest = part.split('\x01', 1)
-                        # 禁词 - 红色加粗
-                        r = p.add_run(forbidden_word)
-                        r.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
-                        r.bold = True
-                        r.font.highlight_color = 6  # 黄色高亮
-                        if rest:
-                            p.add_run(rest)
-                    else:
-                        if part:
-                            p.add_run(part)
-            else:
-                p.add_run(line).font.size = Pt(11)
+        # 如果找不到锚点，就插入到正文末尾
+        if best_pos == -1:
+            best_pos = len(modified_body)
 
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer, title
+        # 插入缺失的话术
+        for phrase in missing_phrases:
+            insert_text = phrase
+            # 确保前后有适当的标点和换行
+            if best_pos > 0 and modified_body[best_pos-1] not in "。！\n":
+                insert_text = "。" + insert_text
+            if not insert_text.endswith(("。", "！")):
+                insert_text += "。"
+
+            modified_body = modified_body[:best_pos] + insert_text + modified_body[best_pos:]
+            best_pos += len(insert_text)
+            inserted += 1
+
+    # 替换原内容中的正文部分
+    result = content.replace(body, modified_body)
+    return result, inserted
+
+def run_all_checks(content):
+    """运行全部审核检查，返回结果字典"""
+    results = {}
+    title = extract_title(content)
+    tags = extract_tags(content)
+    word_count = count_chinese(content)
+
+    # 审核1: 卖点顺序
+    positions = {}
+    for cat, phrases in ORDER_ANCHORS.items():
+        min_pos = float('inf')
+        for p in phrases:
+            idx = content.find(p)
+            if idx != -1 and idx < min_pos:
+                min_pos = idx
+        positions[cat] = min_pos if min_pos != float('inf') else -1
+    cats = ["防敏-水解技术", "自护力", "基础营养"]
+    order_ok = True
+    order_details = []
+    for i, cat in enumerate(cats):
+        pos = positions[cat]
+        found = pos != -1
+        order_details.append({"category": cat, "position": pos, "found": found})
+        if not found:
+            order_ok = False
+        elif i > 0 and positions[cats[i - 1]] != -1 and pos < positions[cats[i - 1]]:
+            order_ok = False
+    results["check1"] = {"status": "pass" if order_ok else "fail", "details": order_details}
+
+    # 审核2: 字数（800-900字）
+    results["check2"] = {"status": "pass" if 800 <= word_count <= 900 else "fail", "count": word_count}
+
+    # 审核3: 标题数量
+    results["check3"] = {"status": "fail", "count": 1, "title": title,
+                         "note": "KOL初稿通常只有1个标题，需提供3个备选"}
+
+    # 审核4: 标签
+    missing_tags = [t for t in REQUIRED_TAGS if t not in tags]
+    results["check4"] = {
+        "status": "pass" if len(tags) >= 10 and not missing_tags else "fail",
+        "count": len(tags), "missing": missing_tags, "tags": tags,
+    }
+
+    # 审核5: 关键词
+    kw_items = []
+    for w in TITLE_KEYWORDS:
+        kw_items.append({"scope": "标题", "word": w, "found": w in title})
+    for w in BODY_KEYWORDS:
+        kw_items.append({"scope": "正文", "word": w, "found": w in content})
+    for w in COVER_KEYWORDS:
+        kw_items.append({"scope": "封面(需人工确认)", "word": w, "found": w in content})
+    results["check5"] = {
+        "status": "pass" if all(r["found"] for r in kw_items) else "fail",
+        "items": kw_items,
+    }
+
+    # 审核6: 禁词
+    fw_items = []
+    for cat, words in FORBIDDEN_WORDS.items():
+        for w in words:
+            violations = check_forbidden_word(content, w)
+            rep = FORBIDDEN_REPLACEMENTS.get(w, "删除")
+            fw_items.append({
+                "category": cat, "word": w,
+                "found": len(violations) > 0,
+                "violations": violations,
+                "replacement": rep,
+            })
+    results["check6"] = {
+        "status": "fail" if any(r["found"] for r in fw_items) else "pass",
+        "items": fw_items,
+    }
+
+    # 审核7: 必提需润色卖点
+    pp_items = []
+    for sp in PARAPHRASE_SELLING_POINTS:
+        found = sp["fragment"] in content
+        pp_items.append({**sp, "found": found})
+    results["check7"] = {
+        "status": "pass" if all(r["found"] for r in pp_items) else "fail",
+        "items": pp_items,
+    }
+
+    # 审核8: 必提不可修改卖点
+    fp_items = []
+    for sp in FIXED_SELLING_POINTS:
+        found = sp["text"] in content
+        fp_items.append({**sp, "found": found})
+    results["check8"] = {
+        "status": "pass" if all(r["found"] for r in fp_items) else "fail",
+        "items": fp_items,
+    }
+
+    # 审核9: 允许删减的卖点
+    op_items = []
+    for sp in OPTIONAL_SELLING_POINTS:
+        found = sp["fragment"] in content
+        op_items.append({**sp, "found": found})
+    results["check9"] = {"items": op_items}
+
+    return results
+
+def apply_adopted_changes(original, adopted_map, edit_map, check_results):
+    """根据采纳的修改建议生成修改后的文本"""
+    modified = original
+    changes = []
+
+    # 应用禁词替换 (审核6)
+    if "check6" in check_results:
+        for i, item in enumerate(check_results["check6"]["items"]):
+            key = f"c6_{i}"
+            if adopted_map.get(key) and item["found"]:
+                old_word = item["word"]
+                new_word = edit_map.get(key, item["replacement"])
+                if old_word in modified:
+                    # 尊重例外
+                    exceptions = FORBIDDEN_EXCEPTIONS.get(old_word, [])
+                    if exceptions:
+                        # 逐个位置替换，跳过例外
+                        result = []
+                        start = 0
+                        while True:
+                            idx = modified.find(old_word, start)
+                            if idx == -1:
+                                result.append(modified[start:])
+                                break
+                            ctx = modified[max(0, idx - 10):idx + len(old_word) + 10]
+                            is_exc = any(exc in ctx for exc in exceptions)
+                            if is_exc:
+                                result.append(modified[start:idx + len(old_word)])
+                            else:
+                                result.append(modified[start:idx])
+                                result.append(new_word)
+                                changes.append({"old": old_word, "new": new_word})
+                            start = idx + len(old_word)
+                        modified = "".join(result)
+                    else:
+                        modified = modified.replace(old_word, new_word)
+                        changes.append({"old": old_word, "new": new_word})
+
+    # 补充缺失标签 (审核4)
+    if "check4" in check_results:
+        missing = check_results["check4"].get("missing", [])
+        for i, tag in enumerate(missing):
+            key = f"c4_{i}"
+            if adopted_map.get(key):
+                if tag not in modified:
+                    modified = modified.rstrip() + " " + tag
+                    changes.append({"old": "", "new": tag})
+
+    return modified, changes
+
+def highlight_diff(text, changes, mode="original"):
+    """对文本中的修改部分进行高亮"""
+    html = text
+    for c in changes:
+        if mode == "original" and c["old"]:
+            html = html.replace(
+                c["old"],
+                f'<span style="background:#c8e6c9;padding:1px 4px;border-radius:3px;font-weight:bold;">{c["old"]}</span>'
+            )
+        elif mode == "modified" and c["new"]:
+            html = html.replace(
+                c["new"],
+                f'<span style="background:#f8bbd0;padding:1px 4px;border-radius:3px;font-weight:bold;">{c["new"]}</span>'
+            )
+    return html.replace('\n', '<br>')
 
 # ========== 页面配置 ==========
 st.set_page_config(page_title="赞意AI审稿系统", page_icon="🤖", layout="wide")
@@ -293,534 +471,993 @@ st.set_page_config(page_title="赞意AI审稿系统", page_icon="🤖", layout="
 st.markdown("""
 <style>
 .block-container {padding-top: 1rem !important; padding-bottom: 1rem !important;}
-/* 左栏：淡酒红色 */
-[data-testid="column"]:first-child {
-    background-color: #f5eaed;
-    border-radius: 15px;
-    padding: 20px;
-    border: 2px solid #8b4557;
+/* 导航栏 */
+.nav-bar {
+    display: flex; gap: 0; margin-bottom: 20px; border-radius: 10px; overflow: hidden;
+    border: 2px solid #ddd;
 }
-/* 右栏：淡海军蓝 */
-[data-testid="column"]:nth-child(2) {
-    background-color: #e8ecf4;
-    border-radius: 15px;
-    padding: 20px;
-    border: 2px solid #2c3e6b;
+.nav-item {
+    flex: 1; text-align: center; padding: 12px 10px; font-weight: bold; font-size: 15px;
+    cursor: default;
+}
+.nav-part1 { background: #eef1fa; color: #2c3e6b; border-right: 2px solid #ddd; }
+.nav-part2 { background: #f0faf4; color: #2e7d32; border-right: 2px solid #ddd; }
+.nav-part3 { background: #fff8e1; color: #f57c00; border-right: 2px solid #ddd; }
+.nav-part4 { background: #fce4ec; color: #c2185b; }
+/* Part1 蓝紫色 */
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part1-marker) {
+    background-color: #f5f3ff !important;
+    border: 2px solid #c4b5fd !important;
+    border-radius: 12px !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part1-marker) button[kind="primary"] {
+    background-color: #7c3aed !important; border-color: #7c3aed !important; color: white !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part1-marker) button[kind="primary"]:hover {
+    background-color: #6d28d9 !important; border-color: #6d28d9 !important;
+}
+/* Part2 绿色 */
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part2-marker) {
+    background-color: #edf7f0 !important;
+    border: 2px solid #b4dfc6 !important;
+    border-radius: 12px !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part2-marker) button[kind="primary"] {
+    background-color: #4caf50 !important; border-color: #4caf50 !important; color: white !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part2-marker) button[kind="primary"]:hover {
+    background-color: #388e3c !important; border-color: #388e3c !important;
+}
+/* Part3 橙色 */
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part3-marker) {
+    background-color: #fff8e1 !important;
+    border: 2px solid #ffcc80 !important;
+    border-radius: 12px !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part3-marker) button[kind="primary"] {
+    background-color: #ff9800 !important; border-color: #ff9800 !important; color: white !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part3-marker) button[kind="primary"]:hover {
+    background-color: #f57c00 !important; border-color: #f57c00 !important;
+}
+/* Part4 粉色 */
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part4-marker) {
+    background-color: #fce4ec !important;
+    border: 2px solid #f48fb1 !important;
+    border-radius: 12px !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part4-marker) button[kind="primary"] {
+    background-color: #e91e63 !important; border-color: #e91e63 !important; color: white !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(#part4-marker) button[kind="primary"]:hover {
+    background-color: #c2185b !important; border-color: #c2185b !important;
+}
+/* 审核卡片 */
+.check-header-pass {
+    background: #e8f5e9; border-left: 5px solid #4caf50; padding: 10px 15px;
+    margin: 10px 0 5px 0; border-radius: 0 8px 8px 0; font-weight: bold; font-size: 15px;
+}
+.check-header-fail {
+    background: #fce4ec; border-left: 5px solid #e57373; padding: 10px 15px;
+    margin: 10px 0 5px 0; border-radius: 0 8px 8px 0; font-weight: bold; font-size: 15px;
+}
+.check-header-info {
+    background: #fff8e1; border-left: 5px solid #ffc107; padding: 10px 15px;
+    margin: 10px 0 5px 0; border-radius: 0 8px 8px 0; font-weight: bold; font-size: 15px;
 }
 /* 文件上传中文化 */
-[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] p {
-    font-size: 0 !important;
-}
-[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] p::after {
-    content: "将文件拖到此处上传";
-    font-size: 14px !important;
-}
-[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] button {
-    font-size: 0 !important;
-    position: relative;
-}
-[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] button::after {
-    content: "选择文件";
-    font-size: 14px !important;
-    position: absolute;
-}
-/* 海军蓝按钮样式 */
-.navy-btn button {
-    background-color: #2c3e6b !important;
+[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] p {font-size: 0 !important;}
+[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] p::after {content: "将文件拖到此处上传"; font-size: 14px !important;}
+[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] button {font-size: 0 !important; position: relative;}
+[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] button::after {content: "选择文件"; font-size: 14px !important; position: absolute;}
+/* 所有下载按钮统一紫色 */
+[data-testid="stDownloadButton"] > button {
+    background-color: #7c3aed !important;
+    border-color: #7c3aed !important;
     color: white !important;
-    border: none !important;
 }
-.navy-btn button:hover {
-    background-color: #1e2d52 !important;
-}
-/* 审核预览区 */
-.original-text-box {
-    background-color: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 15px;
-    height: 400px;
-    overflow-y: auto;
-    font-size: 14px;
-    line-height: 1.8;
-}
-.issue-card {
-    background-color: #fff5f5;
-    border-left: 4px solid #fc8181;
-    padding: 10px 15px;
-    margin: 6px 0;
-    border-radius: 0 8px 8px 0;
-    font-size: 13px;
-}
-.issue-card.accepted {
-    background-color: #f0fff4;
-    border-left-color: #68d391;
+[data-testid="stDownloadButton"] > button:hover {
+    background-color: #6d28d9 !important;
+    border-color: #6d28d9 !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ========== 标题 ==========
 st.markdown("""
-<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; padding: 15px 25px; margin-bottom: 15px;">
-    <h2 style="color: white; margin: 0;">🤖 赞意AI · 小红书KOL审稿系统</h2>
-    <p style="color: rgba(255,255,255,0.9); margin: 5px 0 0 0; font-size: 15px;">兔子小姐，你好呀！我是能恩全护的AI机器人，为你服务~</p>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; padding: 20px 25px; margin-bottom: 15px;">
+    <h2 style="color: white; margin: 0;">🤖 赞意AI · 小红书KOL审稿系统 for 兔子🐰</h2>
 </div>
 """, unsafe_allow_html=True)
 
-# ========== 基本信息 ==========
-col1, col2, col3 = st.columns([2, 1, 1])
-with col1:
-    kol_name = st.text_input("KOL名称", placeholder="例如: 团妈爱测评")
-with col2:
-    version_num = st.selectbox("当前版本", [1, 2, 3, 4, 5])
-with col3:
-    st.caption(f"当前日期: {TODAY}")
-
-# ========== 审稿规则 + 内容切角 ==========
-with st.expander("📐 审稿规则 & 内容切角方向（点击展开配置）", expanded=False):
-    rule_col, angle_col = st.columns([1, 1])
-
-    with rule_col:
-        st.markdown("**📋 审稿规则**")
-        current_rules = get_rules()
-        rule_ver = current_rules.get("version", "未知")
-        st.markdown(f"当前规则版本: **{rule_ver}**")
-        st.caption(f"关键词 {len(current_rules['required_keywords'])} 个 | 禁词 {sum(len(v) for v in current_rules['forbidden_words'].values())} 个 | 卖点 {len(current_rules['selling_points'])} 个 | 标签 {len(current_rules['required_tags'])} 个")
-
-        rules_file = st.file_uploader("上传新规则 (JSON)", type=["json"], key="rules_upload")
-        if rules_file:
-            try:
-                new_rules = json.loads(rules_file.read().decode('utf-8'))
-                # 验证必要字段
-                required_fields = ["required_keywords", "forbidden_words", "selling_points", "required_tags", "max_words", "min_tags"]
-                missing = [f for f in required_fields if f not in new_rules]
-                if missing:
-                    st.error(f"规则文件缺少字段: {', '.join(missing)}")
-                else:
-                    st.session_state.review_rules = new_rules
-                    st.success(f"规则已更新! 版本: {new_rules.get('version', '自定义')}")
-                    # 如果已有稿件，重新审核
-                    if st.session_state.kol_content:
-                        issues, data = run_review(st.session_state.kol_content)
-                        st.session_state.kol_issues = issues
-                        st.session_state.kol_data = data
-            except json.JSONDecodeError:
-                st.error("JSON格式错误，请检查文件")
-
-        # 下载当前规则模板
-        rules_json = json.dumps(current_rules, ensure_ascii=False, indent=2)
-        st.download_button("下载当前规则模板", rules_json.encode('utf-8'), "review_rules.json", "application/json", key="dl_rules")
-
-    with angle_col:
-        st.markdown("**🎯 内容切角方向**")
-        angles = st.session_state.content_angles
-        angle_options = ["请选择切角方向..."] + list(angles.keys())
-        selected = st.selectbox("选择内容切角", angle_options, key="angle_select")
-
-        if selected != "请选择切角方向...":
-            st.session_state.selected_angle = selected
-            st.info(f"**{selected}**: {angles[selected]}")
-        else:
-            st.session_state.selected_angle = None
-
-        # 上传新的切角storyline
-        st.markdown("---")
-        st.caption("上传新的切角方向 (JSON)")
-        angle_file = st.file_uploader("上传切角方向文件", type=["json"], key="angle_upload")
-        if angle_file:
-            try:
-                new_angles = json.loads(angle_file.read().decode('utf-8'))
-                if isinstance(new_angles, dict):
-                    st.session_state.content_angles.update(new_angles)
-                    st.success(f"已添加 {len(new_angles)} 个切角方向")
-                    st.rerun()
-                else:
-                    st.error("格式错误: JSON应该是 {\"切角名称\": \"storyline描述\"} 格式")
-            except json.JSONDecodeError:
-                st.error("JSON格式错误")
-
-        # 下载切角模板
-        angles_json = json.dumps(angles, ensure_ascii=False, indent=2)
-        st.download_button("下载当前切角模板", angles_json.encode('utf-8'), "content_angles.json", "application/json", key="dl_angles")
+# 导航栏
+st.markdown("""
+<div class="nav-bar">
+    <div class="nav-item nav-part1">Part 1 · 八大审核</div>
+    <div class="nav-item nav-part2">Part 2 · 人话修改</div>
+    <div class="nav-item nav-part3">Part 3 · 复核检查</div>
+    <div class="nav-item nav-part4">Part 4 · 终稿完成</div>
+</div>
+""", unsafe_allow_html=True)
 
 # ========== Session State 初始化 ==========
-if 'review_rules' not in st.session_state:
-    st.session_state.review_rules = DEFAULT_RULES.copy()
-if 'content_angles' not in st.session_state:
-    st.session_state.content_angles = DEFAULT_ANGLES.copy()
-if 'selected_angle' not in st.session_state:
-    st.session_state.selected_angle = None
-if 'kol_issues' not in st.session_state:
-    st.session_state.kol_issues = []
 if 'kol_content' not in st.session_state:
     st.session_state.kol_content = ""
-if 'kol_data' not in st.session_state:
-    st.session_state.kol_data = None
-if 'client_analysis' not in st.session_state:
-    st.session_state.client_analysis = ""
-if 'client_content_saved' not in st.session_state:
-    st.session_state.client_content_saved = ""
-if 'selling_suggestions' not in st.session_state:
-    st.session_state.selling_suggestions = {}
-if 'selling_inputs' not in st.session_state:
-    st.session_state.selling_inputs = {}
+if 'audit_results' not in st.session_state:
+    st.session_state.audit_results = None
+if 'audit_adopted' not in st.session_state:
+    st.session_state.audit_adopted = {}
+if 'audit_edits' not in st.session_state:
+    st.session_state.audit_edits = {}
+if 'modified_content' not in st.session_state:
+    st.session_state.modified_content = ""
+if 'diff_changes' not in st.session_state:
+    st.session_state.diff_changes = []
+if 'renhua_result' not in st.session_state:
+    st.session_state.renhua_result = ""
+if 'renhua_adopted' not in st.session_state:
+    st.session_state.renhua_adopted = False
+if 'recheck_content' not in st.session_state:
+    st.session_state.recheck_content = ""
+if 'recheck_results' not in st.session_state:
+    st.session_state.recheck_results = None
+if 'final_content' not in st.session_state:
+    st.session_state.final_content = ""
+if 'final_ready' not in st.session_state:
+    st.session_state.final_ready = False
 
-# ========== 上传区：左右两栏 ==========
-col_left, col_right = st.columns(2)
+# ========== 稿件方向选择 ==========
+DIRECTION_OPTIONS = [
+    "请选择稿件方向...",
+    "方向1.【育婴师防敏科普】",
+    "方向2.【单品分享】",
+    "方向3.【反向经验分享-家族过敏史】",
+    "方向4.【反向经验分享-剖腹产】",
+    "方向5.【防敏待产包分享-孕晚敏感】",
+    "方向6.【防敏待产包分享-剖腹产】",
+    "方向7.【养宠家庭】",
+    "方向8.【a2VS第一口顶配】",
+    "方向9.【能恩全护贵有所值】",
+    "方向10.【能恩全护+超启能恩家族测评】",
+    "方向11.【防敏竞品测评】",
+    "方向12.【跨境能恩全测评】",
+]
 
-with col_left:
-    st.markdown("#### 📄 上传KOL稿件")
-    kol_file = st.file_uploader("上传 .docx 文件（可拖拽上传）", type=["docx"], key="kol_file")
-    kol_text = st.text_area("或粘贴内容", height=120, placeholder="粘贴KOL稿件...", key="kol_text")
+if 'selected_direction' not in st.session_state:
+    st.session_state.selected_direction = DIRECTION_OPTIONS[0]
 
-    kol_content = ""
-    if kol_file:
-        kol_file.seek(0)
-        kol_content = read_docx(kol_file)
-        st.success(f"已读取: {kol_file.name}")
-    elif kol_text:
-        kol_content = kol_text
+# ========== 输入区 ==========
+dir_col, date_col = st.columns([3, 1])
+with dir_col:
+    selected_dir = st.selectbox("本稿件符合方向", DIRECTION_OPTIONS, key="direction_select")
+    st.session_state.selected_direction = selected_dir
+with date_col:
+    st.caption(f"当前日期: {TODAY}")
 
-    # 有内容就自动审稿
-    if kol_content:
-        issues, data = run_review(kol_content)
-        st.session_state.kol_issues = issues
-        st.session_state.kol_content = kol_content
-        st.session_state.kol_data = data
-        st.success(f"审核完成! 发现 {len(issues)} 个问题")
+upload_col, paste_col = st.columns(2)
+with upload_col:
+    kol_file = st.file_uploader("上传KOL稿件 (.docx)", type=["docx"], key="kol_file")
+with paste_col:
+    kol_text = st.text_area("或粘贴稿件内容", height=120, placeholder="在此粘贴KOL稿件内容...", key="kol_text")
 
-with col_right:
-    st.markdown("#### 💬 上传客户反馈")
-    client_file = st.file_uploader("上传 .docx 文件（可拖拽上传）", type=["docx"], key="client_file")
-    client_text = st.text_area("或粘贴内容", height=120, placeholder="粘贴客户反馈...", key="client_text")
+if kol_file:
+    kol_file.seek(0)
+    st.session_state.kol_content = read_docx(kol_file)
+elif kol_text:
+    st.session_state.kol_content = kol_text
 
-    client_content = ""
-    if client_file:
-        client_file.seek(0)
-        client_content = read_docx(client_file)
-        st.success(f"已读取: {client_file.name}")
-    elif client_text:
-        client_content = client_text
+# ================================================================
+# Part 1: 八大审核
+# ================================================================
+with st.container(border=True):
+    st.markdown('<div id="part1-marker"></div>', unsafe_allow_html=True)
+    st.markdown("#### Part 1 · 八大审核")
+    st.caption("本地Python逐项检查，全部结果以表格展示，发现问题可编辑建议并采纳保存")
 
-    st.markdown('<div class="navy-btn">', unsafe_allow_html=True)
-    analyze_clicked = st.button("分析反馈", key="btn_analyze", use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    if analyze_clicked:
-        if not kol_name:
-            st.error("请填写KOL名称")
-        elif not client_content:
-            st.error("请上传或粘贴客户反馈")
-        elif not st.session_state.kol_content:
-            st.error("请先上传KOL原稿并审核")
-        else:
-            st.session_state.client_content_saved = client_content
-            with st.spinner("AI分析中..."):
-                analysis = analyze_client_feedback(st.session_state.kol_content, client_content)
-                st.session_state.client_analysis = analysis
-
-# ========== 审核预览区（全宽，横跨两栏） ==========
-if st.session_state.kol_issues and st.session_state.kol_content:
-    st.markdown("---")
-    st.markdown("### 📋 在线审核预览")
-
-    # 统计栏
-    total = len(st.session_state.kol_issues)
-    data = st.session_state.kol_data
-    word_count = data["word_count"] if data else 0
-    tag_count = len(data["tags"]) if data else 0
-
-    s1, s2, s3, s4 = st.columns(4)
-    s1.metric("审核问题", f"{total} 条")
-    s2.metric("稿件字数", f"{word_count}")
-    s3.metric("标签数量", f"{tag_count}")
-    s4.metric("字数上限", f"{get_rules()['max_words']}")
-
-    # 左：原文 | 右：审核意见
-    preview_left, preview_right = st.columns([1, 1])
-
-    with preview_left:
-        st.markdown("#### 📄 稿件原文")
-        # 把原文中的禁词高亮显示
-        highlighted = st.session_state.kol_content
-        for cat, words in get_rules()["forbidden_words"].items():
-            for w in words:
-                if w in highlighted:
-                    highlighted = highlighted.replace(w, f'<mark style="background-color:#fed7d7;padding:2px 4px;border-radius:3px;font-weight:bold;">{w}</mark>')
-        # 把必含关键词高亮（绿色）
-        for kw in get_rules()["required_keywords"]:
-            if kw in highlighted:
-                highlighted = highlighted.replace(kw, f'<mark style="background-color:#c6f6d5;padding:2px 4px;border-radius:3px;">{kw}</mark>')
-
-        html_content = highlighted.replace('\n', '<br>')
-        # 原文直接展开显示，不限高度
-        st.markdown(f"""<div style="background-color:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:15px;font-size:14px;line-height:2.0;">
-{html_content}
-</div>""", unsafe_allow_html=True)
-        st.caption("🔴 红色高亮 = 禁词  |  🟢 绿色高亮 = 必含关键词")
-
-    with preview_right:
-        st.markdown("#### ✏️ 审核意见（勾选采纳）")
-
-        issue_types = {"keyword": "🔑 关键词", "forbidden": "🚫 禁词", "selling": "💡 卖点", "structure": "📐 结构", "tag": "🏷️ 标签"}
-        selected = []
-
-        # 按类型分组
-        grouped = {}
-        for i, issue in enumerate(st.session_state.kol_issues):
-            t = issue["type"]
-            if t not in grouped:
-                grouped[t] = []
-            grouped[t].append((i, issue))
-
-        for issue_type, items in grouped.items():
-            type_label = issue_types.get(issue_type, issue_type)
-            is_selling = (issue_type == "selling")
-            with st.expander(f"{type_label} ({len(items)}条)", expanded=(issue_type in ["forbidden", "keyword", "selling"])):
-                for i, issue in items:
-                    checked = st.checkbox(issue["desc"], key=f"iss_{i}", value=True)
-                    if checked:
-                        selected.append(i)
-
-                    # 显示原文引用上下文
-                    if issue.get("context"):
-                        ctx = issue["context"]
-                        st.markdown(f'<div style="background:#fff8f0;border-left:3px solid #ed8936;padding:5px 10px;margin:4px 0;font-size:12px;color:#744210;">📍 原文: "...{ctx}..."</div>', unsafe_allow_html=True)
-                    elif issue_type in ["keyword", "selling"]:
-                        st.markdown(f'<div style="background:#fff8f0;border-left:3px solid #ed8936;padding:5px 10px;margin:4px 0;font-size:12px;color:#744210;">📍 原文中未找到此内容</div>', unsafe_allow_html=True)
-
-                    st.caption(f"建议: {issue['suggestion']}")
-
-                    # 卖点类：提供在线输入 + AI建议
-                    if is_selling:
-                        sp_key = f"sp_{i}"
-
-                        btn_col, input_col = st.columns([1, 2])
-                        with btn_col:
-                            ai_clicked = st.button("🤖 AI帮我写", key=f"btn_ai_{i}")
-                        with input_col:
-                            current_val = st.session_state.selling_inputs.get(sp_key, "")
-                            user_input = st.text_input(
-                                "自定义写法",
-                                value=current_val,
-                                placeholder="在此输入你的表达方式...",
-                                key=f"input_{i}",
-                                label_visibility="collapsed",
-                            )
-                            if user_input:
-                                st.session_state.selling_inputs[sp_key] = user_input
-
-                        # AI生成建议
-                        if ai_clicked:
-                            selling_point = issue["suggestion"].replace("请加入: ", "")
-                            prompt = f"""你是小红书母婴KOL文案专家。KOL需要在稿件中加入以下产品卖点：
-「{selling_point}」
-
-请生成3个不同风格的表达方式，要求：
-1. 口语化、接地气、像妈妈在分享
-2. 不能用禁词（敏宝、过敏、预防、新生儿、免疫、生长、发育）
-3. 每个控制在30字以内
-
-只输出3个表达，每行一个，用序号开头：
-1. xxx
-2. xxx
-3. xxx"""
-                            result = call_llm_api(prompt)
-                            if result and not result.startswith("Error"):
-                                st.session_state.selling_suggestions[sp_key] = result
-                                st.rerun()
-                            elif result and result.startswith("Error"):
-                                st.error(f"AI调用失败: {result}")
-                            else:
-                                st.error("API Key未设置，请配置OPENAI_API_KEY环境变量")
-
-                        # 显示AI建议（如果有）
-                        if sp_key in st.session_state.selling_suggestions:
-                            suggestions_text = st.session_state.selling_suggestions[sp_key]
-                            suggestion_lines = [l.strip() for l in suggestions_text.split('\n') if l.strip() and l.strip()[0].isdigit()]
-                            for si, sline in enumerate(suggestion_lines):
-                                clean = re.sub(r'^\d+[\.\、\)]\s*', '', sline)
-                                if st.button(f"👆 选用: {clean}", key=f"pick_{i}_{si}"):
-                                    st.session_state.selling_inputs[sp_key] = clean
-                                    st.rerun()
-
-                        st.markdown("---")
-
-    # ===== 人话修改 =====
-    st.markdown("---")
-    st.markdown("#### 🗣️ 人话修改")
-    st.caption("用AI把稿件改得更口语化、更像真实妈妈在小红书分享的语气")
-
-    if 'social_rewrite' not in st.session_state:
-        st.session_state.social_rewrite = ""
-
-    if st.button("🗣️ 人话修改", key="btn_social", use_container_width=True):
-        content = st.session_state.kol_content
-        rules = get_rules()
-        # 构建禁词列表
-        all_forbidden = []
-        for cat, words in rules["forbidden_words"].items():
-            all_forbidden.extend(words)
-        forbidden_str = "、".join(all_forbidden)
-
-        # 构建切角方向提示
-        angle_hint = ""
-        if st.session_state.selected_angle:
-            angle_name = st.session_state.selected_angle
-            angle_desc = st.session_state.content_angles.get(angle_name, "")
-            angle_hint = f"\n内容切角方向：{angle_name}\n切角说明：{angle_desc}\n请按照这个切角方向来调整稿件的叙事角度和风格。\n"
-
-        prompt = f"""你是小红书母婴领域的资深KOL文案改写专家。
-
-请把以下稿件改写得更加口语化、social、接地气，像一个真实的妈妈在小红书上分享经验。
-{angle_hint}
-要求：
-1. 保留所有产品卖点信息，不能删减核心内容
-2. 语气要自然、亲切，像跟闺蜜聊天
-3. 可以加一些妈妈的真实感受、口头禅（比如"姐妹们"、"真的绝了"、"谁懂啊"等）
-4. 不能用这些禁词：{forbidden_str}
-5. 段落要短，适合手机阅读
-6. 保留所有标签（#开头的）
-
-原稿件：
-{content}
-
-请直接输出改写后的完整稿件，不要加任何说明："""
-        result = call_llm_api(prompt)
-        if result and not result.startswith("Error"):
-            st.session_state.social_rewrite = result
-            st.rerun()
-        elif result:
-            st.error(f"AI调用失败: {result}")
-
-    if st.session_state.social_rewrite:
-        rewrite_left, rewrite_right = st.columns([1, 1])
-        with rewrite_left:
-            st.markdown("**原文**")
-            st.text_area("原文内容", st.session_state.kol_content, height=300, disabled=True, key="social_orig")
-        with rewrite_right:
-            st.markdown("**人话版本** (可直接编辑)")
-            edited_social = st.text_area("修改后内容", st.session_state.social_rewrite, height=300, key="social_edit")
-            if edited_social != st.session_state.social_rewrite:
-                st.session_state.social_rewrite = edited_social
-
-        # 用人话版本替换原稿
-        if st.button("采用人话版本作为正式稿件", key="btn_apply_social", use_container_width=True, type="primary"):
-            st.session_state.kol_content = st.session_state.social_rewrite
-            issues, data = run_review(st.session_state.social_rewrite)
-            st.session_state.kol_issues = issues
-            st.session_state.kol_data = data
-            st.session_state.social_rewrite = ""
+    if not st.session_state.kol_content:
+        st.info("请先上传或粘贴KOL稿件")
+    else:
+        # 开始审核按钮
+        if st.button("开始八大审核", key="btn_audit", use_container_width=True, type="primary"):
+            st.session_state.audit_results = run_all_checks(st.session_state.kol_content)
+            st.session_state.audit_adopted = {}
+            st.session_state.audit_edits = {}
+            st.session_state.modified_content = ""
+            st.session_state.diff_changes = []
             st.rerun()
 
-    # 补充意见 + 生成文档（全宽）
-    st.markdown("---")
-    comment_col, action_col = st.columns([2, 1])
+        # 显示审核结果
+        if st.session_state.audit_results:
+            r = st.session_state.audit_results
+            content = st.session_state.kol_content
 
-    with comment_col:
-        st.markdown("#### 💬 补充意见（可选）")
-        extra_comments = st.text_area("输入额外的审核意见或备注", height=80, placeholder="例如: 整体语气偏硬，建议更口语化一些...", key="extra_comments")
+            # --- 统计概览 ---
+            pass_count = sum(1 for k in ["check1","check2","check3","check4","check5","check6","check7","check8"]
+                           if r.get(k, {}).get("status") == "pass")
+            fail_count = 8 - pass_count
+            m1, m2, m3 = st.columns(3)
+            m1.metric("通过", f"{pass_count}/8")
+            m2.metric("需修改", f"{fail_count}")
+            m3.metric("稿件字数", f"{r['check2']['count']}")
 
-    with action_col:
-        st.markdown("#### 📊 审核统计")
-        accepted = len(selected)
-        st.markdown(f"已采纳 **{accepted}** / {total} 条")
-        st.progress(accepted / total if total > 0 else 0)
+            # ==========================================
+            # 审核1: 卖点顺序
+            # ==========================================
+            s1 = r["check1"]["status"]
+            icon1 = "✅" if s1 == "pass" else "❌"
+            cls1 = "check-header-pass" if s1 == "pass" else "check-header-fail"
+            st.markdown(f'<div class="{cls1}">{icon1} 审核1：卖点顺序（防敏-水解技术 → 自护力 → 基础营养）</div>', unsafe_allow_html=True)
+            rows1 = ""
+            for d in r["check1"]["details"]:
+                found = "✅ 已出现" if d["found"] else "❌ 未出现"
+                pos = f"位置: {d['position']}" if d["found"] else "—"
+                bg = "#f0fff4" if d["found"] else "#fff5f5"
+                rows1 += f'<tr style="background:{bg};"><td style="border:1px solid #ddd;padding:6px 8px;">{d["category"]}</td><td style="border:1px solid #ddd;padding:6px 8px;">{found}</td><td style="border:1px solid #ddd;padding:6px 8px;">{pos}</td></tr>'
+            st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:13px;margin:4px 0 12px 0;">
+            <thead><tr style="background:#f0f2f6;"><th style="border:1px solid #ddd;padding:8px;">卖点类别</th><th style="border:1px solid #ddd;padding:8px;">检查结果</th><th style="border:1px solid #ddd;padding:8px;">位置</th></tr></thead>
+            <tbody>{rows1}</tbody></table>''', unsafe_allow_html=True)
+            if s1 == "fail":
+                st.text_input("修改建议", value="请调整段落顺序：先写防敏-水解技术，再写自护力，最后写基础营养", key="edit_c1", disabled=False)
+                st.checkbox("采纳", key="adopt_c1", value=True)
 
-        if kol_name:
-            output_name = f"{kol_name}_{TODAY}_KOL-赞意_第{version_num}版"
-            st.markdown(f"`📁 {output_name}.docx`")
+            # ==========================================
+            # 审核2: 字数检查
+            # ==========================================
+            s2 = r["check2"]["status"]
+            icon2 = "✅" if s2 == "pass" else "❌"
+            cls2 = "check-header-pass" if s2 == "pass" else "check-header-fail"
+            wc = r["check2"]["count"]
+            st.markdown(f'<div class="{cls2}">{icon2} 审核2：字数检查（{wc}字，要求800-900字）</div>', unsafe_allow_html=True)
+            if s2 == "fail":
+                st.warning(f"超出 {wc - 900} 字，请精简内容")
+                wc_hint = "需扩充内容" if wc < 800 else "需精简内容"
+                st.text_input("修改建议", value=f"当前{wc}字，{wc_hint}至800-900字", key="edit_c2")
+                st.checkbox("采纳", key="adopt_c2", value=True)
 
-            if st.button("确认并生成批注文档", key="btn_gen_kol", use_container_width=True, type="primary"):
-                buffer, title = create_annotated_docx(
-                    st.session_state.kol_content,
-                    st.session_state.kol_issues,
-                    selected, kol_name, version_num, 2,
-                    extra_comments if extra_comments else None,
-                    st.session_state.selling_inputs
+            # ==========================================
+            # 审核3: 标题数量
+            # ==========================================
+            st.markdown(f'<div class="check-header-fail">❌ 审核3：标题数量（需3个备选标题）</div>', unsafe_allow_html=True)
+            title = r["check3"]["title"]
+            st.markdown(f'<table style="width:100%;border-collapse:collapse;font-size:13px;margin:4px 0 12px 0;"><thead><tr style="background:#f0f2f6;"><th style="border:1px solid #ddd;padding:8px;">当前标题</th><th style="border:1px solid #ddd;padding:8px;">要求</th><th style="border:1px solid #ddd;padding:8px;">结果</th></tr></thead><tbody><tr style="background:#fff5f5;"><td style="border:1px solid #ddd;padding:6px 8px;">{title[:50]}...</td><td style="border:1px solid #ddd;padding:6px 8px;">3个备选标题</td><td style="border:1px solid #ddd;padding:6px 8px;">❌ 仅1个</td></tr></tbody></table>', unsafe_allow_html=True)
+            st.caption("建议：人话修改阶段AI将自动生成3个备选标题")
+
+            # ==========================================
+            # 审核4: 话题标签
+            # ==========================================
+            s4 = r["check4"]["status"]
+            icon4 = "✅" if s4 == "pass" else "❌"
+            cls4 = "check-header-pass" if s4 == "pass" else "check-header-fail"
+            tc = r["check4"]["count"]
+            st.markdown(f'<div class="{cls4}">{icon4} 审核4：话题标签（当前{tc}个，要求10个以上）</div>', unsafe_allow_html=True)
+
+            rows4 = ""
+            for tag in REQUIRED_TAGS:
+                found = tag in r["check4"]["tags"]
+                icon = "✅" if found else "❌ 缺失"
+                bg = "#f0fff4" if found else "#fff5f5"
+                rows4 += f'<tr style="background:{bg};"><td style="border:1px solid #ddd;padding:6px 8px;">{tag}</td><td style="border:1px solid #ddd;padding:6px 8px;">{icon}</td></tr>'
+            st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:13px;margin:4px 0 12px 0;">
+            <thead><tr style="background:#f0f2f6;"><th style="border:1px solid #ddd;padding:8px;">必含标签</th><th style="border:1px solid #ddd;padding:8px;">结果</th></tr></thead>
+            <tbody>{rows4}</tbody></table>''', unsafe_allow_html=True)
+
+            if r["check4"]["missing"]:
+                for mi, mtag in enumerate(r["check4"]["missing"]):
+                    c4_col1, c4_col2 = st.columns([3, 1])
+                    with c4_col1:
+                        st.text_input(f"补充标签", value=mtag, key=f"edit_c4_{mi}")
+                    with c4_col2:
+                        st.checkbox("采纳", key=f"adopt_c4_{mi}", value=True)
+
+            # ==========================================
+            # 审核5: 关键词
+            # ==========================================
+            s5 = r["check5"]["status"]
+            icon5 = "✅" if s5 == "pass" else "❌"
+            cls5 = "check-header-pass" if s5 == "pass" else "check-header-fail"
+            st.markdown(f'<div class="{cls5}">{icon5} 审核5：必须出现关键词</div>', unsafe_allow_html=True)
+
+            rows5 = ""
+            for item in r["check5"]["items"]:
+                found = "✅ 已包含" if item["found"] else "❌ 缺失"
+                bg = "#f0fff4" if item["found"] else "#fff5f5"
+                rows5 += f'<tr style="background:{bg};"><td style="border:1px solid #ddd;padding:6px 8px;">{item["scope"]}</td><td style="border:1px solid #ddd;padding:6px 8px;font-weight:bold;">{item["word"]}</td><td style="border:1px solid #ddd;padding:6px 8px;">{found}</td></tr>'
+            st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:13px;margin:4px 0 12px 0;">
+            <thead><tr style="background:#f0f2f6;"><th style="border:1px solid #ddd;padding:8px;">检查范围</th><th style="border:1px solid #ddd;padding:8px;">关键词</th><th style="border:1px solid #ddd;padding:8px;">结果</th></tr></thead>
+            <tbody>{rows5}</tbody></table>''', unsafe_allow_html=True)
+
+            missing_kw = [item for item in r["check5"]["items"] if not item["found"]]
+            for ki, kw_item in enumerate(missing_kw):
+                c5_col1, c5_col2 = st.columns([3, 1])
+                with c5_col1:
+                    st.text_input(f"修改建议", value=f"请在{kw_item['scope']}中加入「{kw_item['word']}」", key=f"edit_c5_{ki}")
+                with c5_col2:
+                    st.checkbox("采纳", key=f"adopt_c5_{ki}", value=True)
+
+            # ==========================================
+            # 审核6: 禁词/禁用表达
+            # ==========================================
+            s6 = r["check6"]["status"]
+            icon6 = "✅" if s6 == "pass" else "❌"
+            cls6 = "check-header-pass" if s6 == "pass" else "check-header-fail"
+            st.markdown(f'<div class="{cls6}">{icon6} 审核6：禁词/禁用表达检查</div>', unsafe_allow_html=True)
+
+            rows6 = ""
+            for item in r["check6"]["items"]:
+                if item["found"]:
+                    icon = "❌ 出现了"
+                    bg = "#fff5f5"
+                    ctx_list = item.get("violations", [])
+                    ctx_str = "、".join([f'"{v["context"].strip()}"' for v in ctx_list[:2]])
+                else:
+                    icon = "✅ 未出现"
+                    bg = "#f0fff4"
+                    ctx_str = "—"
+                rows6 += f'<tr style="background:{bg};"><td style="border:1px solid #ddd;padding:6px 8px;">{item["category"]}</td><td style="border:1px solid #ddd;padding:6px 8px;font-weight:bold;">{item["word"]}</td><td style="border:1px solid #ddd;padding:6px 8px;">{icon}</td><td style="border:1px solid #ddd;padding:6px 8px;font-size:12px;">{ctx_str}</td></tr>'
+            st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:13px;margin:4px 0 12px 0;">
+            <thead><tr style="background:#f0f2f6;"><th style="border:1px solid #ddd;padding:8px;">类型</th><th style="border:1px solid #ddd;padding:8px;">禁词</th><th style="border:1px solid #ddd;padding:8px;">结果</th><th style="border:1px solid #ddd;padding:8px;">上下文</th></tr></thead>
+            <tbody>{rows6}</tbody></table>''', unsafe_allow_html=True)
+
+            found_forbidden = [item for item in r["check6"]["items"] if item["found"]]
+            for fi, fw in enumerate(found_forbidden):
+                c6_col1, c6_col2 = st.columns([3, 1])
+                with c6_col1:
+                    default_rep = fw["replacement"]
+                    edited = st.text_input(f"「{fw['word']}」替换为", value=default_rep, key=f"edit_c6_{fi}")
+                    st.session_state.audit_edits[f"c6_{r['check6']['items'].index(fw)}"] = edited
+                with c6_col2:
+                    st.checkbox("采纳", key=f"adopt_c6_{fi}", value=True)
+
+            # ==========================================
+            # 审核7: 必提需润色卖点（上下行结构）
+            # ==========================================
+            s7 = r["check7"]["status"]
+            icon7 = "✅" if s7 == "pass" else "❌"
+            cls7 = "check-header-pass" if s7 == "pass" else "check-header-fail"
+            st.markdown(f'<div class="{cls7}">{icon7} 审核7：必提需润色卖点（4大方向 · 10小方向）</div>', unsafe_allow_html=True)
+
+            # 上下行结构：每个卖点一个卡片，内容+建议在一起
+            current_cat7 = ""
+            pi_counter = 0
+            for item in r["check7"]["items"]:
+                # 分类标题
+                if item["category"] != current_cat7:
+                    current_cat7 = item["category"]
+                    st.markdown(f'<div style="background:#e8eaf6;padding:6px 12px;margin-top:10px;border-radius:5px;font-weight:bold;color:#3949ab;">📂 大方向：{current_cat7}</div>', unsafe_allow_html=True)
+
+                found = item["found"]
+                icon = "✅" if found else "❌"
+                bg = "#f0fff4" if found else "#fff5f5"
+                border_color = "#4caf50" if found else "#ef5350"
+
+                # 卡片：话术内容
+                st.markdown(f'''<div style="background:{bg};border-left:4px solid {border_color};padding:10px 15px;margin:6px 0;border-radius:0 8px 8px 0;">
+                <div style="font-size:13px;"><b>小方向{item["idx"]}</b> {icon}</div>
+                <div style="font-size:13px;color:#333;margin-top:4px;line-height:1.6;">{item["text"]}</div>
+                </div>''', unsafe_allow_html=True)
+
+                # 如果未找到，显示建议编辑框（紧跟在内容下方）
+                if not found:
+                    c7_col1, c7_col2 = st.columns([4, 1])
+                    with c7_col1:
+                        st.text_input("修改建议", value=f"需润色加入：{item['text']}", key=f"edit_c7_{pi_counter}", label_visibility="collapsed")
+                    with c7_col2:
+                        st.checkbox("采纳", key=f"adopt_c7_{pi_counter}", value=True)
+                    pi_counter += 1
+
+            # ==========================================
+            # 审核8: 必提不可修改卖点（上下行结构）
+            # ==========================================
+            s8 = r["check8"]["status"]
+            icon8 = "✅" if s8 == "pass" else "❌"
+            cls8 = "check-header-pass" if s8 == "pass" else "check-header-fail"
+            st.markdown(f'<div class="{cls8}">{icon8} 审核8：必提不可修改卖点（3大切角 · 10小切角，必须字字不差）</div>', unsafe_allow_html=True)
+
+            # 上下行结构：每个卖点一个卡片，内容+建议在一起
+            current_cat8 = ""
+            fpi_counter = 0
+            for item in r["check8"]["items"]:
+                # 分类标题
+                if item["category"] != current_cat8:
+                    current_cat8 = item["category"]
+                    st.markdown(f'<div style="background:#fce4ec;padding:6px 12px;margin-top:10px;border-radius:5px;font-weight:bold;color:#c2185b;">📂 大切角：{current_cat8}</div>', unsafe_allow_html=True)
+
+                found = item["found"]
+                icon = "✅" if found else "❌"
+                bg = "#f0fff4" if found else "#fff5f5"
+                border_color = "#4caf50" if found else "#ef5350"
+
+                # 卡片：话术内容（强调不可修改）
+                if found:
+                    # 已找到：显示正常卡片
+                    st.markdown(f'''<div style="background:{bg};border-left:4px solid {border_color};padding:10px 15px;margin:6px 0;border-radius:0 8px 8px 0;">
+                    <div style="font-size:13px;"><b>小切角{item["idx"]}</b> {icon} <span style="color:#4caf50;font-size:11px;">（已包含）</span></div>
+                    <div style="font-size:13px;color:#333;margin-top:4px;line-height:1.6;font-weight:500;">{item["text"]}</div>
+                    </div>''', unsafe_allow_html=True)
+                else:
+                    # 未找到：显示"没有提到，建议增加"
+                    st.markdown(f'''<div style="background:{bg};border-left:4px solid {border_color};padding:10px 15px;margin:6px 0;border-radius:0 8px 8px 0;">
+                    <div style="font-size:13px;"><b>小切角{item["idx"]}</b> {icon} <span style="color:#c62828;font-size:11px;font-weight:bold;">没有提到</span></div>
+                    <div style="font-size:13px;color:#c62828;margin-top:4px;line-height:1.6;font-weight:600;">建议增加：<span style="color:#333;">{item["text"]}</span></div>
+                    </div>''', unsafe_allow_html=True)
+
+                # 如果未找到，显示建议编辑框（紧跟在内容下方）
+                if not found:
+                    c8_col1, c8_col2 = st.columns([4, 1])
+                    with c8_col1:
+                        st.text_input("修改建议", value=f"必须原封不动加入：{item['text']}", key=f"edit_c8_{fpi_counter}", label_visibility="collapsed")
+                    with c8_col2:
+                        st.checkbox("采纳", key=f"adopt_c8_{fpi_counter}", value=True)
+                    fpi_counter += 1
+
+            # ==========================================
+            # 审核9: 允许删减的卖点
+            # ==========================================
+            st.markdown(f'<div class="check-header-info">ℹ️ 审核9：允许删减的卖点（仅供参考）</div>', unsafe_allow_html=True)
+            rows9 = ""
+            for item in r["check9"]["items"]:
+                found = "✅ 已出现" if item["found"] else "— 未出现（可删减）"
+                bg = "#f0fff4" if item["found"] else "#fffde7"
+                rows9 += f'<tr style="background:{bg};"><td style="border:1px solid #ddd;padding:6px 8px;"><b>{item["category"]}</b></td><td style="border:1px solid #ddd;padding:6px 8px;font-size:12px;">{item["text"]}</td><td style="border:1px solid #ddd;padding:6px 8px;">{found}</td></tr>'
+            st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:13px;margin:4px 0 12px 0;">
+            <thead><tr style="background:#f0f2f6;"><th style="border:1px solid #ddd;padding:8px;">类别</th><th style="border:1px solid #ddd;padding:8px;">卖点内容</th><th style="border:1px solid #ddd;padding:8px;">状态</th></tr></thead>
+            <tbody>{rows9}</tbody></table>''', unsafe_allow_html=True)
+
+            # ==========================================
+            # 标准卖点示例
+            # ==========================================
+            with st.expander("📖 标准卖点示例（参考）", expanded=False):
+                st.markdown(SELLING_POINT_EXAMPLE)
+
+            # ==========================================
+            # 保存采纳 + 左右对比
+            # ==========================================
+            st.markdown("---")
+            if st.button("保存所有采纳修改 → 生成对比预览", key="btn_save_audit", use_container_width=True, type="primary"):
+                # 收集所有采纳状态
+                adopted = {}
+                edits = {}
+
+                # 审核6 禁词替换
+                found_fw = [item for item in r["check6"]["items"] if item["found"]]
+                for fi, fw in enumerate(found_fw):
+                    real_idx = r["check6"]["items"].index(fw)
+                    adopted[f"c6_{real_idx}"] = st.session_state.get(f"adopt_c6_{fi}", False)
+                    edits[f"c6_{real_idx}"] = st.session_state.get(f"edit_c6_{fi}", fw["replacement"])
+
+                # 审核4 缺失标签
+                missing_tags = r["check4"].get("missing", [])
+                for mi, _ in enumerate(missing_tags):
+                    adopted[f"c4_{mi}"] = st.session_state.get(f"adopt_c4_{mi}", False)
+
+                st.session_state.audit_adopted = adopted
+                st.session_state.audit_edits = edits
+
+                modified, changes = apply_adopted_changes(
+                    st.session_state.kol_content, adopted, edits, r
                 )
-                st.download_button("下载文档 - 可发给客户", buffer, f"{output_name}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_kol")
+                st.session_state.modified_content = modified
+                st.session_state.diff_changes = changes
+                st.rerun()
 
-# ========== 客户反馈分析区（全宽） ==========
-if st.session_state.client_analysis:
-    st.markdown("---")
-    st.markdown("### 💬 客户反馈分析")
+            # 显示对比预览
+            if st.session_state.modified_content:
+                st.markdown("---")
+                st.markdown("### 对比预览（原文 vs 修改后）")
+                st.caption("🟢 绿色 = 原文中被修改的部分 | 🩷 粉色 = 修改后的内容")
 
-    feedback_left, feedback_right = st.columns([1, 1])
+                cmp_left, cmp_right = st.columns(2)
+                with cmp_left:
+                    st.markdown("**原文（绿色标注修改处）**")
+                    orig_html = highlight_diff(st.session_state.kol_content, st.session_state.diff_changes, "original")
+                    st.markdown(f'<div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:15px;font-size:14px;line-height:2.0;">{orig_html}</div>', unsafe_allow_html=True)
 
-    with feedback_left:
-        st.markdown("#### 📄 客户修改内容")
-        if st.session_state.client_content_saved:
-            st.markdown(f'<div class="original-text-box">{st.session_state.client_content_saved.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+                with cmp_right:
+                    st.markdown("**修改后（粉色标注修改处）**")
+                    mod_html = highlight_diff(st.session_state.modified_content, st.session_state.diff_changes, "modified")
+                    st.markdown(f'<div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:15px;font-size:14px;line-height:2.0;">{mod_html}</div>', unsafe_allow_html=True)
 
-    with feedback_right:
-        st.markdown("#### ✏️ 修改分析")
-        if "===修改分析===" in st.session_state.client_analysis:
-            parts = st.session_state.client_analysis.split("===总结===")
-            analysis_part = parts[0].replace("===修改分析===", "").strip()
+                # 编辑 + 采用
+                with st.expander("需要微调？点击编辑修改后内容", expanded=False):
+                    edited_mod = st.text_area("修改后内容（可编辑）", st.session_state.modified_content, height=300, key="edit_modified")
+                    if edited_mod != st.session_state.modified_content:
+                        st.session_state.modified_content = edited_mod
 
-            lines = analysis_part.split("\n")
-            changes = []
-            current = {}
-            for line in lines:
-                line = line.strip()
-                if line.startswith("修改"):
-                    if current:
-                        changes.append(current)
-                    current = {"desc": line, "status": "", "suggestion": ""}
-                elif line.startswith("状态:"):
-                    current["status"] = line.replace("状态:", "").strip()
-                elif line.startswith("建议:"):
-                    current["suggestion"] = line.replace("建议:", "").strip()
-            if current:
-                changes.append(current)
+                adopt_col, dl_col = st.columns(2)
+                with adopt_col:
+                    if st.button("采用修改后稿件（进入人话修改）", key="btn_adopt_audit", use_container_width=True, type="primary"):
+                        st.session_state.kol_content = st.session_state.modified_content
+                        st.success("已采用！可进入下方人话修改")
 
-            for i, c in enumerate(changes):
-                is_ok = "符合" in c.get("status", "")
-                checked = st.checkbox(c.get('desc', ''), key=f"cc_{i}", value=is_ok)
-                status_icon = "✅" if is_ok else "⚠️"
-                if c.get("suggestion"):
-                    st.caption(f"{status_icon} {c['suggestion']}")
+                with dl_col:
+                    from docx.shared import Pt
+                    doc = Document()
+                    style = doc.styles['Normal']
+                    style.font.name = 'PingFang SC'
+                    style.font.size = Pt(11)
+                    output_name = f"采纳后稿件_{TODAY}"
+                    doc.add_heading("采纳后稿件", 0)
+                    for line in st.session_state.modified_content.split('\n'):
+                        if line.strip():
+                            doc.add_paragraph(line.strip())
+                    buf = io.BytesIO()
+                    doc.save(buf)
+                    buf.seek(0)
+                    st.download_button("📥 下载采纳后稿件", buf, f"{output_name}.docx",
+                                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                     key="dl_audit")
 
-            if len(parts) > 1:
-                st.info(parts[1].strip())
-        else:
-            st.write(st.session_state.client_analysis)
+# ================================================================
+# Part 2: 人话修改
+# ================================================================
+with st.container(border=True):
+    st.markdown('<div id="part2-marker"></div>', unsafe_allow_html=True)
+    st.markdown("#### Part 2 · 人话修改（六步审计法）")
+    st.caption("AI按照六步审计法对稿件进行人话修改：卖点逻辑→结构完整性→口吻人设→关键词禁词→话术回填→内容结构占比")
 
-    # 补充意见 + 生成
-    st.markdown("---")
-    fc_col, fa_col = st.columns([2, 1])
+    if not st.session_state.kol_content:
+        st.info("请先上传稿件并完成八大审核")
+    else:
+        st.markdown(f'<div style="background:#fff;border-left:3px solid #4caf50;padding:8px 12px;font-size:13px;margin-bottom:10px;">当前稿件：{count_chinese(st.session_state.kol_content)} 字</div>', unsafe_allow_html=True)
 
-    with fc_col:
-        st.markdown("#### 💬 补充意见给KOL（可选）")
-        client_extra = st.text_area("输入额外的反馈意见", height=80, placeholder="例如: 客户希望第3张图片突出产品包装...", key="client_extra")
+        if st.button("开始人话修改（自动循环至八大审核全通过）", key="btn_renhua", use_container_width=True, type="primary"):
+            max_retries = 5
+            retry_count = 0
+            current_content = st.session_state.kol_content
+            final_result = None
+            all_passed = False
 
-    with fa_col:
-        if kol_name:
-            output_name = f"{kol_name}_{TODAY}_KOL-赞意-客户_第{version_num}版"
-            st.markdown(f"`📁 {output_name}.docx`")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-            if st.button("确认并生成给KOL的文档", key="btn_gen_client", use_container_width=True, type="primary"):
-                doc = Document()
-                doc.add_heading(output_name, 0)
-                doc.add_paragraph(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-                doc.add_paragraph("---")
-                doc.add_heading("客户修改分析", level=1)
-                doc.add_paragraph(st.session_state.client_analysis)
-                if client_extra:
-                    doc.add_paragraph("---")
-                    doc.add_heading("补充意见", level=1)
-                    doc.add_paragraph(client_extra)
-                doc.add_paragraph("---")
-                doc.add_heading("修改后内容", level=1)
-                saved = st.session_state.client_content_saved
-                for line in saved.split('\n'):
-                    if line.strip():
-                        doc.add_paragraph(line)
-                buffer = io.BytesIO()
-                doc.save(buffer)
-                buffer.seek(0)
-                st.download_button("下载文档 - 可发给KOL", buffer, f"{output_name}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_client")
+            while retry_count < max_retries and not all_passed:
+                retry_count += 1
+                status_text.markdown(f"🔄 **第 {retry_count} 次生成中...**（最多尝试{max_retries}次）")
+                progress_bar.progress(retry_count / max_retries * 0.8)
 
+                if retry_count == 1:
+                    # 第一次：使用原始prompt
+                    prompt = RENHUA_PROMPT.replace("{content}", current_content)
+                else:
+                    # 后续：根据失败项生成修正prompt
+                    fix_hints = []
+                    r = run_all_checks(final_result)
+                    if r.get("check1", {}).get("status") != "pass":
+                        fix_hints.append("- 调整卖点顺序：必须按 防敏-水解技术→自护力→基础营养 顺序")
+                    if r.get("check2", {}).get("status") != "pass":
+                        wc = r['check2']['count']
+                        hint = "字数不足，需扩充" if wc < 800 else "字数超标，需精简"
+                        fix_hints.append(f"- {hint}：当前{wc}字，必须在800-900字之间")
+                    if r.get("check3", {}).get("status") != "pass":
+                        fix_hints.append("- 必须提供3个备选标题")
+                    if r.get("check4", {}).get("status") != "pass":
+                        missing = r['check4'].get('missing', [])
+                        fix_hints.append(f"- 补充标签：{', '.join(missing)}")
+                    if r.get("check5", {}).get("status") != "pass":
+                        fix_hints.append("- 标题必含【适度水解、防敏、科普】，正文必含【适度水解、防敏、能恩全护】")
+                    if r.get("check6", {}).get("status") != "pass":
+                        found = [x['word'] for x in r['check6']['items'] if x['found']]
+                        fix_hints.append(f"- 删除禁词：{', '.join(found)}")
+                    if r.get("check7", {}).get("status") != "pass":
+                        fix_hints.append("- 补充润色卖点：确保10个小方向核心内容都有体现")
+                    if r.get("check8", {}).get("status") != "pass":
+                        missing8 = [x['text'] for x in r['check8']['items'] if not x['found']]
+                        fix_hints.append(f"- 必须原封不动加入以下话术：\n  " + "\n  ".join(missing8))
+
+                    fix_text = "\n".join(fix_hints)
+                    prompt = f"""请修正以下稿件，解决检测到的问题：
+
+【需要修正的问题】
+{fix_text}
+
+【当前稿件】
+{final_result}
+
+【修正要求】
+1. ⚠️ 正文必须在800-900字之间（最重要！）
+2. 必须提供3个备选标题（包含：适度水解、防敏、科普）
+3. 必须包含10个以上标签，包括：#能恩全护 #适度水解 #适度水解奶粉推荐 #第一口奶粉
+4. 删除所有禁词（敏宝、奶瓶、奶嘴、新生儿、过敏、疾病、预防、免疫）
+5. 必须包含全部10句不可修改话术（字字不差）
+6. 保持小红书活人感爆文风格（用"姐妹们""真的绝了"等口语化表达）
+
+请直接输出修正后的完整稿件：
+### 标题备选（3个）
+### 正文（800-900字，必须写够！）
+### 话题标签（10个以上）"""
+
+                result = call_llm_api(prompt)
+                if result and not result.startswith("Error"):
+                    final_result = result
+                    # 自动插入缺失的不可修改话术
+                    final_result, inserted_count = auto_insert_fixed_phrases(final_result)
+                    if inserted_count > 0:
+                        status_text.markdown(f"📝 自动补充了 {inserted_count} 条缺失话术")
+                    # 检查是否全部通过
+                    check_result = run_all_checks(final_result)
+                    pass_count = sum(1 for k in ["check1","check2","check3","check4","check5","check6","check7","check8"]
+                                   if check_result.get(k, {}).get("status") == "pass")
+                    status_text.markdown(f"🔍 第 {retry_count} 次检查：通过 {pass_count}/8 项")
+                    if pass_count == 8:
+                        all_passed = True
+                else:
+                    status_text.error(f"AI调用失败: {result}")
+                    break
+
+            progress_bar.progress(1.0)
+            if all_passed:
+                status_text.success(f"✅ 八大审核全部通过！（共尝试 {retry_count} 次）")
+                st.session_state.renhua_result = final_result
+                st.session_state.recheck_results = run_all_checks(final_result)
+                st.rerun()
+            elif final_result:
+                status_text.warning(f"⚠️ 已达最大尝试次数({max_retries}次)，当前结果可能仍有未通过项，可手动编辑修正")
+                st.session_state.renhua_result = final_result
+                st.session_state.recheck_results = run_all_checks(final_result)
+                st.rerun()
+
+        if st.session_state.renhua_result:
+            st.markdown("---")
+
+            # 展示原文
+            with st.expander("📄 审核后稿件（修改前）", expanded=False):
+                orig_html = st.session_state.kol_content.replace('\n', '<br>')
+                st.markdown(f'<div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:15px;font-size:13px;line-height:1.8;">{orig_html}</div>', unsafe_allow_html=True)
+
+            # ===== 复核检查 =====
+            st.markdown("### 🔍 复核检查（人话修改后自动验证）")
+            result_text = st.session_state.renhua_result
+
+            # 检查标题数量
+            title_matches = re.findall(r'###\s*标题备选.*?(?=###|$)', result_text, re.DOTALL)
+            title_section = title_matches[0] if title_matches else ""
+            title_count = len(re.findall(r'\d+\.\s*.+', title_section))
+
+            # 检查正文字数
+            body_matches = re.findall(r'###\s*正文.*?(?=###|$)', result_text, re.DOTALL)
+            body_section = body_matches[0] if body_matches else result_text
+            body_word_count = count_chinese(body_section)
+
+            # 检查标签数量
+            tags_in_result = extract_tags(result_text)
+
+            # 检查活人感关键词（增强版）
+            human_markers = ["我", "你", "咱", "说实话", "不瞒你说", "一开始", "其实", "真的", "姐妹", "绝了", "救命", "后悔"]
+            human_found = sum(1 for m in human_markers if m in result_text)
+            # 检查emoji使用
+            emoji_markers = ["💡", "✨", "🔥", "❗", "👶", "🍼", "💪", "❤️", "🙋", "😊"]
+            emoji_found = sum(1 for e in emoji_markers if e in result_text)
+            # 检查感叹号使用（小红书爆文特征）
+            exclamation_count = result_text.count("！") + result_text.count("!")
+
+            # 复核表格
+            check_items = [
+                ("审核2 - 字数", f"{body_word_count}字（要求800-900）", "pass" if 800 <= body_word_count <= 900 else "fail"),
+                ("审核3 - 标题数量", f"{title_count}个备选标题", "pass" if title_count >= 3 else "fail"),
+                ("审核4 - 标签数量", f"{len(tags_in_result)}个标签", "pass" if len(tags_in_result) >= 10 else "fail"),
+                ("活人感关键词", f"包含{human_found}/{len(human_markers)}个口语化表达", "pass" if human_found >= 5 else "warn"),
+                ("Emoji使用", f"包含{emoji_found}个emoji", "pass" if emoji_found >= 3 else "warn"),
+                ("爆文语气", f"{exclamation_count}个感叹号", "pass" if exclamation_count >= 5 else "warn"),
+            ]
+
+            rows_recheck = ""
+            for name, detail, status in check_items:
+                if status == "pass":
+                    icon = "✅"
+                    bg = "#f0fff4"
+                elif status == "fail":
+                    icon = "❌"
+                    bg = "#fff5f5"
+                else:
+                    icon = "⚠️"
+                    bg = "#fffde7"
+                rows_recheck += f'<tr style="background:{bg};"><td style="border:1px solid #ddd;padding:8px;">{name}</td><td style="border:1px solid #ddd;padding:8px;">{detail}</td><td style="border:1px solid #ddd;padding:8px;font-weight:bold;">{icon}</td></tr>'
+
+            st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0 16px 0;">
+            <thead><tr style="background:#e3f2fd;"><th style="border:1px solid #ddd;padding:8px;">检查项</th><th style="border:1px solid #ddd;padding:8px;">详情</th><th style="border:1px solid #ddd;padding:8px;">结果</th></tr></thead>
+            <tbody>{rows_recheck}</tbody></table>''', unsafe_allow_html=True)
+
+            # 活人感详细检查
+            with st.expander("📝 小红书爆文笔记攻略 · 活人感检查", expanded=True):
+                st.markdown("**🗣️ 口语化表达**")
+                markers_detail = []
+                for m in human_markers:
+                    if m in result_text:
+                        markers_detail.append(f'<span style="background:#c8e6c9;padding:2px 6px;border-radius:3px;margin:2px;">✅ {m}</span>')
+                    else:
+                        markers_detail.append(f'<span style="background:#ffcdd2;padding:2px 6px;border-radius:3px;margin:2px;">❌ {m}</span>')
+                st.markdown(f'<div style="line-height:2.2;">{"".join(markers_detail)}</div>', unsafe_allow_html=True)
+
+                st.markdown("**😊 Emoji使用**")
+                emoji_detail = []
+                for e in emoji_markers:
+                    if e in result_text:
+                        emoji_detail.append(f'<span style="background:#c8e6c9;padding:2px 6px;border-radius:3px;margin:2px;">✅ {e}</span>')
+                    else:
+                        emoji_detail.append(f'<span style="background:#ffcdd2;padding:2px 6px;border-radius:3px;margin:2px;">❌ {e}</span>')
+                st.markdown(f'<div style="line-height:2.2;">{"".join(emoji_detail)}</div>', unsafe_allow_html=True)
+
+                st.markdown(f"**🔥 爆文语气**：共{exclamation_count}个感叹号（建议≥5个）")
+                st.caption("小红书爆文特征：多用感叹号、emoji、口语化表达，像闺蜜聊天一样自然")
+
+            # 展示AI结果
+            st.markdown("---")
+            st.markdown("### 人话修改结果")
+            st.markdown(st.session_state.renhua_result)
+
+            # 编辑 + 操作
+            with st.expander("需要微调？点击编辑", expanded=False):
+                edited_renhua = st.text_area("人话修改内容（可编辑）", st.session_state.renhua_result, height=400, key="edit_renhua")
+                if edited_renhua != st.session_state.renhua_result:
+                    st.session_state.renhua_result = edited_renhua
+
+            if st.button("采用人话修改结果 → 进入Part 3复核", key="btn_adopt_renhua", use_container_width=True, type="primary"):
+                st.session_state.renhua_adopted = True
+                st.session_state.recheck_content = st.session_state.renhua_result
+                st.session_state.recheck_results = None
+                st.session_state.final_ready = False
+                st.success("已采用！请在下方Part 3进行复核检查")
+                st.rerun()
+
+# ================================================================
+# Part 3: 复核检查
+# ================================================================
+with st.container(border=True):
+    st.markdown('<div id="part3-marker"></div>', unsafe_allow_html=True)
+    st.markdown("#### Part 3 · 复核检查（再次八大审核）")
+    st.caption("对人话修改后的稿件进行八大审核，确保合规后可编辑微调")
+
+    if not st.session_state.renhua_adopted or not st.session_state.recheck_content:
+        st.info("请先完成Part 2人话修改并采用结果")
+    else:
+        # 显示当前内容字数
+        recheck_wc = count_chinese(st.session_state.recheck_content)
+        st.markdown(f'<div style="background:#fff;border-left:3px solid #ff9800;padding:8px 12px;font-size:13px;margin-bottom:10px;">待复核稿件：{recheck_wc} 字</div>', unsafe_allow_html=True)
+
+        # 开始复核按钮
+        if st.button("开始复核（八大审核）", key="btn_recheck", use_container_width=True, type="primary"):
+            st.session_state.recheck_results = run_all_checks(st.session_state.recheck_content)
+            st.rerun()
+
+        # 显示复核结果
+        if st.session_state.recheck_results:
+            r3 = st.session_state.recheck_results
+
+            # 统计概览
+            pass_count3 = sum(1 for k in ["check1","check2","check3","check4","check5","check6","check7","check8"]
+                           if r3.get(k, {}).get("status") == "pass")
+            fail_count3 = 8 - pass_count3
+
+            st.markdown("### 复核结果概览")
+            m3_1, m3_2, m3_3 = st.columns(3)
+            m3_1.metric("通过", f"{pass_count3}/8", delta="良好" if pass_count3 >= 6 else "需修改")
+            m3_2.metric("需修改", f"{fail_count3}")
+            m3_3.metric("字数", f"{r3['check2']['count']}字", delta="800-900" if 800 <= r3['check2']['count'] <= 900 else "需调整")
+
+            # 简化的审核结果表格
+            st.markdown("### 八大审核结果")
+            check_names = [
+                ("check1", "审核1-卖点顺序"),
+                ("check2", "审核2-字数检查"),
+                ("check3", "审核3-标题数量"),
+                ("check4", "审核4-话题标签"),
+                ("check5", "审核5-关键词"),
+                ("check6", "审核6-禁词检查"),
+                ("check7", "审核7-润色卖点"),
+                ("check8", "审核8-不可修改卖点"),
+            ]
+            rows3 = ""
+            for key, name in check_names:
+                status = r3.get(key, {}).get("status", "fail")
+                icon = "✅" if status == "pass" else "❌"
+                bg = "#f0fff4" if status == "pass" else "#fff5f5"
+                # 详情
+                if key == "check2":
+                    detail = f"{r3['check2']['count']}字（要求800-900）"
+                elif key == "check3":
+                    detail = f"{r3['check3']['count']}个标题"
+                elif key == "check4":
+                    detail = f"{r3['check4']['count']}个标签，缺失{len(r3['check4']['missing'])}个"
+                elif key == "check7":
+                    missing7 = len([x for x in r3['check7']['items'] if not x['found']])
+                    detail = f"缺失{missing7}/10个润色卖点"
+                elif key == "check8":
+                    missing8 = len([x for x in r3['check8']['items'] if not x['found']])
+                    detail = f"缺失{missing8}/10个不可修改卖点"
+                else:
+                    detail = "—"
+                rows3 += f'<tr style="background:{bg};"><td style="border:1px solid #ddd;padding:8px;">{name}</td><td style="border:1px solid #ddd;padding:8px;">{detail}</td><td style="border:1px solid #ddd;padding:8px;font-weight:bold;">{icon}</td></tr>'
+
+            st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0;">
+            <thead><tr style="background:#fff3e0;"><th style="border:1px solid #ddd;padding:8px;">检查项</th><th style="border:1px solid #ddd;padding:8px;">详情</th><th style="border:1px solid #ddd;padding:8px;">结果</th></tr></thead>
+            <tbody>{rows3}</tbody></table>''', unsafe_allow_html=True)
+
+            # 如果有失败项，显示重新生成按钮
+            if fail_count3 > 0:
+                st.markdown("---")
+                st.warning(f"⚠️ 检测到 {fail_count3} 项未通过，需要重新生成人话版本")
+
+                if st.button("🔄 重新生成人话版本（AI自动修正）", key="btn_regenerate", use_container_width=True, type="primary"):
+                    with st.spinner("AI重新生成中，自动修正未通过项..."):
+                        # 构建针对失败项的修正提示
+                        fix_hints = []
+                        if r3.get("check1", {}).get("status") != "pass":
+                            fix_hints.append("- 调整卖点顺序：必须按 防敏-水解技术→自护力→基础营养 顺序")
+                        if r3.get("check2", {}).get("status") != "pass":
+                            wc3 = r3['check2']['count']
+                            hint3 = "字数不足，需扩充" if wc3 < 800 else "字数超标，需精简"
+                            fix_hints.append(f"- {hint3}：当前{wc3}字，必须在800-900字之间")
+                        if r3.get("check3", {}).get("status") != "pass":
+                            fix_hints.append("- 补充标题：必须提供3个备选标题")
+                        if r3.get("check4", {}).get("status") != "pass":
+                            missing_tags = r3['check4'].get('missing', [])
+                            fix_hints.append(f"- 补充标签：缺失 {', '.join(missing_tags[:3])}...")
+                        if r3.get("check6", {}).get("status") != "pass":
+                            found_forbidden = [x['word'] for x in r3['check6']['items'] if x['found']]
+                            fix_hints.append(f"- 删除禁词：{', '.join(found_forbidden)}")
+                        if r3.get("check7", {}).get("status") != "pass":
+                            fix_hints.append("- 补充润色卖点：确保10个小方向都有体现")
+                        if r3.get("check8", {}).get("status") != "pass":
+                            missing_fixed = [x['text'][:20]+"..." for x in r3['check8']['items'] if not x['found']][:3]
+                            fix_hints.append(f"- 补充不可修改卖点：{', '.join(missing_fixed)}")
+
+                        fix_prompt = "\n".join(fix_hints)
+
+                        regen_prompt = f"""你是小红书爆文写手。请修正以下稿件，解决检测到的问题。
+
+【需要修正的问题】
+{fix_prompt}
+
+【原稿件】
+{st.session_state.recheck_content}
+
+【修正要求 - 按重要性排序】
+1. ⚠️ 正文必须在800-900字之间（最重要！写够字数！）
+2. 必须有小红书活人感（用"姐妹们""真的绝了""说实话"等口语化表达）
+3. 必须提供3个备选标题（包含：适度水解、防敏、科普）
+4. 必须包含10个以上标签（必含 #能恩全护 #适度水解）
+5. 删除禁词（敏宝、奶瓶、奶嘴、新生儿、过敏、疾病、预防、免疫）
+6. 必须包含全部10句不可修改话术（字字不差）
+
+请直接输出修正后的完整稿件：
+### 标题备选（3个）
+### 正文（800-900字，必须写够！）
+### 话题标签（10个以上）"""
+
+                        result = call_llm_api(regen_prompt)
+                        if result and not result.startswith("Error"):
+                            # 自动插入缺失的不可修改话术
+                            result, inserted_count = auto_insert_fixed_phrases(result)
+                            if inserted_count > 0:
+                                st.info(f"📝 自动补充了 {inserted_count} 条缺失话术")
+                            st.session_state.recheck_content = result
+                            # 同步text_area的key
+                            st.session_state.edit_recheck_content = result
+                            st.session_state.recheck_results = run_all_checks(result)
+                            st.rerun()
+                        else:
+                            st.error(f"AI调用失败: {result}")
+
+                # 也允许手动编辑
+                st.markdown("---")
+                st.markdown("### 或手动编辑修正")
+            else:
+                st.success("🎉 恭喜！八大审核全部通过！")
+                st.markdown("---")
+                st.markdown("### 最终稿件预览")
+
+            # 可编辑的正文区域
+            edited_recheck = st.text_area(
+                "编辑正文内容",
+                st.session_state.recheck_content,
+                height=400,
+                key="edit_recheck_content"
+            )
+            if edited_recheck != st.session_state.recheck_content:
+                st.session_state.recheck_content = edited_recheck
+
+            # 实时字数显示
+            current_wc = count_chinese(edited_recheck)
+            wc_color = "#4caf50" if 800 <= current_wc <= 900 else "#f44336"
+            st.markdown(f'<div style="text-align:right;color:{wc_color};font-weight:bold;">当前字数：{current_wc}/900</div>', unsafe_allow_html=True)
+
+            # 手动修改后重新检查按钮
+            if fail_count3 > 0:
+                if st.button("🔍 重新检查（手动修改后）", key="btn_manual_recheck", use_container_width=True):
+                    st.session_state.recheck_results = run_all_checks(st.session_state.recheck_content)
+                    st.rerun()
+
+            # 只有全部通过才能进入Part 4
+            if fail_count3 == 0:
+                if st.button("✅ 确认复核完成 → 进入Part 4终稿", key="btn_confirm_recheck", use_container_width=True, type="primary"):
+                    st.session_state.final_content = st.session_state.recheck_content
+                    st.session_state.final_ready = True
+                    st.success("复核完成！请在Part 4预览并下载终稿")
+                    st.rerun()
+            else:
+                st.info("💡 请先修正所有未通过项，八大审核全部通过后才能进入Part 4")
+
+# ================================================================
+# Part 4: 终稿完成
+# ================================================================
+with st.container(border=True):
+    st.markdown('<div id="part4-marker"></div>', unsafe_allow_html=True)
+    st.markdown("#### Part 4 · 终稿完成")
+    st.caption("预览终稿并下载")
+
+    if not st.session_state.final_ready or not st.session_state.final_content:
+        st.info("请先完成Part 3复核检查")
+    else:
+        # 终稿信息
+        final_wc = count_chinese(st.session_state.final_content)
+        final_tags = extract_tags(st.session_state.final_content)
+        dir_name = st.session_state.selected_direction if st.session_state.selected_direction != DIRECTION_OPTIONS[0] else "未指定方向"
+
+        # 信息卡片
+        st.markdown(f'''
+        <div style="background:#fff;border:2px solid #f48fb1;border-radius:10px;padding:15px;margin-bottom:15px;">
+            <div style="font-size:16px;font-weight:bold;color:#c2185b;margin-bottom:10px;">📋 终稿信息</div>
+            <div style="display:flex;gap:20px;flex-wrap:wrap;">
+                <div>📝 字数：<b>{final_wc}</b></div>
+                <div>🏷️ 标签：<b>{len(final_tags)}个</b></div>
+                <div>📂 方向：<b>{dir_name}</b></div>
+                <div>📅 日期：<b>{TODAY}</b></div>
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
+
+        # 终稿预览
+        st.markdown("### 终稿预览")
+        final_html = st.session_state.final_content.replace('\n', '<br>')
+        st.markdown(f'''<div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:20px;font-size:14px;line-height:2.0;max-height:500px;overflow-y:auto;">
+        {final_html}
+        </div>''', unsafe_allow_html=True)
+
+        # 下载按钮
+        st.markdown("---")
+        dl_col1, dl_col2 = st.columns(2)
+
+        with dl_col1:
+            from docx.shared import Pt, RGBColor
+            doc_final = Document()
+            style_final = doc_final.styles['Normal']
+            style_final.font.name = 'PingFang SC'
+            style_final.font.size = Pt(11)
+            output_name_final = f"KOL_{TODAY}_终稿"
+            doc_final.add_heading(output_name_final, 0)
+            doc_final.add_paragraph(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            doc_final.add_paragraph(f"稿件方向: {dir_name}")
+            doc_final.add_paragraph(f"字数: {final_wc}")
+            doc_final.add_paragraph("─" * 50)
+            for line in st.session_state.final_content.split('\n'):
+                if line.strip():
+                    doc_final.add_paragraph(line.strip())
+            buf_final = io.BytesIO()
+            doc_final.save(buf_final)
+            buf_final.seek(0)
+            st.download_button(
+                "📥 下载终稿 (.docx)",
+                buf_final,
+                f"{output_name_final}.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_final",
+                use_container_width=True
+            )
+
+        with dl_col2:
+            # 纯文本下载
+            st.download_button(
+                "📄 下载纯文本 (.txt)",
+                st.session_state.final_content,
+                f"KOL_{TODAY}_终稿.txt",
+                "text/plain",
+                key="dl_final_txt",
+                use_container_width=True
+            )
+
+        st.success("🎉 恭喜！终稿已完成，可下载使用")
+
+# ========== Footer ==========
 st.markdown("---")
-st.caption("🤖 赞意AI审稿系统 v3.2")
+dir_label = st.session_state.selected_direction if st.session_state.selected_direction != DIRECTION_OPTIONS[0] else "能恩全护"
+st.caption(f"🤖 赞意AI审稿系统 v4.0 · {dir_label}")
